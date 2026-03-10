@@ -90,7 +90,7 @@ function CreateInvoice() {
 
   const [showWalletAlert, setShowWalletAlert] = useState(!isConnected);
   // Holds inline validation error for client wallet address
-// Used instead of browser alerts for better, non blocking UX
+  // Used instead of browser alerts for better, non blocking UX
   const [clientAddressError, setClientAddressError] = useState("");
 
   // const TESTNET_TOKEN = ["0xB5E9C6e57C9d312937A059089B547d0036c155C7"]; //sepolia based chainvoice test token (CIN)
@@ -217,7 +217,7 @@ function CreateInvoice() {
                 symbol: preselectedToken.symbol,
                 name: preselectedToken.name,
                 logo: preselectedToken.image,
-                decimals: Number(decimals) 
+                decimals: Number(decimals)
               });
               setUseCustomToken(false);
             } else {
@@ -258,7 +258,7 @@ function CreateInvoice() {
     const initLit = async () => {
       if (!litClientRef.current) {
         const client = new LitNodeClient({
-          litNetwork: LIT_NETWORK.DatilDev,
+          litNetwork: LIT_NETWORK.Datil,
           debug: false,
         });
         await client.connect();
@@ -316,36 +316,36 @@ function CreateInvoice() {
     ]);
   };
 
-  
 
-const validateClientAddress = useCallback((value) => {
-  // Empty input, no error
-  if (!value) {
+
+  const validateClientAddress = useCallback((value) => {
+    // Empty input, no error
+    if (!value) {
+      setClientAddressError("");
+      return;
+    }
+
+    // Do not validate until it looks like a full EVM address
+    if (!value.startsWith("0x") || value.length < 42) {
+      setClientAddressError("");
+      return;
+    }
+
+    // Invalid EVM address
+    if (!ethers.isAddress(value)) {
+      setClientAddressError("Please enter a valid wallet address");
+      return;
+    }
+
+    // Self-invoicing check
+    if (value.toLowerCase() === account.address?.toLowerCase()) {
+      setClientAddressError("You cannot create an invoice for your own wallet");
+      return;
+    }
+
+    // Valid other wallet
     setClientAddressError("");
-    return;
-  }
-
-  // Do not validate until it looks like a full EVM address
-  if (!value.startsWith("0x") || value.length < 42) {
-    setClientAddressError("");
-    return;
-  }
-
-  // Invalid EVM address
-  if (!ethers.isAddress(value)) {
-    setClientAddressError("Please enter a valid wallet address");
-    return;
-  }
-
-  // Self-invoicing check
-  if (value.toLowerCase() === account.address?.toLowerCase()) {
-    setClientAddressError("You cannot create an invoice for your own wallet");
-    return;
-  }
-
-  // Valid other wallet
-  setClientAddressError("");
-}, [account.address]);
+  }, [account.address]);
 
   const createInvoiceRequest = async (data) => {
     if (!isConnected || !walletClient) {
@@ -404,87 +404,101 @@ const validateClientAddress = useCallback((value) => {
       const invoiceString = JSON.stringify(invoicePayload);
 
       // 2. Setup Lit
-      const litNodeClient = litClientRef.current;
-      if (!litNodeClient) {
-        alert("Lit client not initialized");
-        return;
-      }
-      const accessControlConditions = [
-        {
-          contractAddress: "",
-          standardContractType: "",
-          chain: "ethereum",
-          method: "",
-          parameters: [":userAddress"],
-          returnValueTest: {
-            comparator: "=",
-            value: account.address.toLowerCase(),
-          },
-        },
-        { operator: "or" },
-        {
-          contractAddress: "",
-          standardContractType: "",
-          chain: "ethereum",
-          method: "",
-          parameters: [":userAddress"],
-          returnValueTest: {
-            comparator: "=",
-            value: data.clientAddress.toLowerCase(),
-          },
-        },
-      ];
+      let encryptedStringBase64;
+      let finalDataToEncryptHash = "mock_hash";
 
-      const { ciphertext, dataToEncryptHash } = await encryptString(
-        {
-          accessControlConditions,
-          dataToEncrypt: invoiceString,
-        },
-        litNodeClient
-      );
+      const currentChainId = Number(account?.chainId || account?.chain?.id);
 
-      const sessionSigs = await litNodeClient.getSessionSigs({
-        chain: "ethereum",
-        resourceAbilityRequests: [
+      if (currentChainId === 31337 || currentChainId === 1337) {
+        // Mock Encryption for Localhost
+        encryptedStringBase64 = btoa(unescape(encodeURIComponent(invoiceString)));
+      } else {
+        const litNodeClient = litClientRef.current;
+        if (!litNodeClient) {
+          alert("Lit client not initialized");
+          return;
+        }
+        const accessControlConditions = [
           {
-            resource: new LitAccessControlConditionResource("*"),
-            ability: LIT_ABILITY.AccessControlConditionDecryption,
+            contractAddress: "",
+            standardContractType: "",
+            chain: "ethereum",
+            method: "",
+            parameters: [":userAddress"],
+            returnValueTest: {
+              comparator: "=",
+              value: account.address.toLowerCase(),
+            },
           },
-        ],
-        authNeededCallback: async ({
-          uri,
-          expiration,
-          resourceAbilityRequests,
-        }) => {
-          const nonce = await litNodeClient.getLatestBlockhash();
-          const toSign = await createSiweMessageWithRecaps({
+          { operator: "or" },
+          {
+            contractAddress: "",
+            standardContractType: "",
+            chain: "ethereum",
+            method: "",
+            parameters: [":userAddress"],
+            returnValueTest: {
+              comparator: "=",
+              value: data.clientAddress.toLowerCase(),
+            },
+          },
+        ];
+
+        const { ciphertext, dataToEncryptHash } = await encryptString(
+          {
+            accessControlConditions,
+            dataToEncrypt: invoiceString,
+          },
+          litNodeClient
+        );
+
+        finalDataToEncryptHash = dataToEncryptHash;
+
+        const sessionSigs = await litNodeClient.getSessionSigs({
+          chain: "ethereum",
+          resourceAbilityRequests: [
+            {
+              resource: new LitAccessControlConditionResource("*"),
+              ability: LIT_ABILITY.AccessControlConditionDecryption,
+            },
+          ],
+          authNeededCallback: async ({
             uri,
             expiration,
-            resources: resourceAbilityRequests,
-            walletAddress: account.address,
-            nonce,
-            litNodeClient,
-          });
+            resourceAbilityRequests,
+          }) => {
+            const nonce = await litNodeClient.getLatestBlockhash();
+            const toSign = await createSiweMessageWithRecaps({
+              uri,
+              expiration,
+              resources: resourceAbilityRequests,
+              walletAddress: account.address,
+              nonce,
+              litNodeClient,
+            });
 
-          return await generateAuthSig({
-            signer,
-            toSign,
-          });
-        },
-      });
+            return await generateAuthSig({
+              signer,
+              toSign,
+            });
+          },
+        });
 
-      const encryptedStringBase64 = btoa(ciphertext);
+        encryptedStringBase64 = btoa(ciphertext);
+      }
 
-      if (!account?.chainId) {
+      if (!currentChainId) {
         throw new Error("Missing chainId: wallet connected but chain not configured");
       }
 
-      const contractAddress = import.meta.env[
-        `VITE_CONTRACT_ADDRESS_${account.chainId}`
-      ];
+      const contractAddress = (currentChainId === 31337 || currentChainId === 1337)
+        ? "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+        : import.meta.env[`VITE_CONTRACT_ADDRESS_${currentChainId}`];
+
+      console.log("Current Chain ID:", currentChainId, "Found Contract Address:", contractAddress);
 
       if (!contractAddress) {
-        throw new Error("Unsupported network or contract address missing");
+        throw new Error(`Unsupported network or contract address missing for chain: ${currentChainId}`);
       }
 
       const contract = new Contract(contractAddress, ChainvoiceABI, signer);
@@ -494,7 +508,7 @@ const validateClientAddress = useCallback((value) => {
         ethers.parseUnits(totalAmountDue.toString(), paymentToken.decimals),
         paymentToken.address,
         encryptedStringBase64,
-        dataToEncryptHash
+        finalDataToEncryptHash
       );
 
       const receipt = await tx.wait();
@@ -545,21 +559,21 @@ const validateClientAddress = useCallback((value) => {
         {(searchParams.get("clientAddress") ||
           searchParams.get("amount") ||
           searchParams.get("description")) && (
-          <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 overflow-hidden">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <div>
-                <p className="text-sm font-medium text-green-800">
-                  Form Pre-filled from Link
-                </p>
-                <p className="text-xs text-green-600">
-                  Some fields have been automatically filled based on the shared
-                  link. You can modify them if needed.
-                </p>
+            <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 overflow-hidden">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="h-5 w-5 text-green-600" />
+                <div>
+                  <p className="text-sm font-medium text-green-800">
+                    Form Pre-filled from Link
+                  </p>
+                  <p className="text-xs text-green-600">
+                    Some fields have been automatically filled based on the shared
+                    link. You can modify them if needed.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
         <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white">
           Create New Invoice
@@ -741,20 +755,21 @@ const validateClientAddress = useCallback((value) => {
                 className="w-full mb-4 border-gray-300 text-black"
                 name="clientAddress"
                 value={clientAddress}
-                onChange={(e) => {const value = e.target.value;
-                         setClientAddress(value);
-                      validateClientAddress(value);
-                     }}
-                     onBlur={(e) => {
-    validateClientAddress(e.target.value);
-  }}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setClientAddress(value);
+                  validateClientAddress(value);
+                }}
+                onBlur={(e) => {
+                  validateClientAddress(e.target.value);
+                }}
               />
               {clientAddressError && (
-                 <div className="mt-2 flex items-center gap-2 text-sm text-red-600">
-                    <AlertCircle className="h-4 w-4" />
-                        <span>{clientAddressError}</span>
-                            </div>
-                               )}
+                <div className="mt-2 flex items-center gap-2 text-sm text-red-600">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>{clientAddressError}</span>
+                </div>
+              )}
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row gap-4">
                   <div className="flex-1">
@@ -1173,9 +1188,9 @@ const validateClientAddress = useCallback((value) => {
                           disabled
                           value={String(
                             (parseFloat(itemData[index]?.qty) || 0) *
-                              (parseFloat(itemData[index]?.unitPrice) || 0) -
-                              (parseFloat(itemData[index]?.discount) || 0) +
-                              (parseFloat(itemData[index]?.tax) || 0)
+                            (parseFloat(itemData[index]?.unitPrice) || 0) -
+                            (parseFloat(itemData[index]?.discount) || 0) +
+                            (parseFloat(itemData[index]?.tax) || 0)
                           )}
                         />
                       </div>
@@ -1270,9 +1285,9 @@ const validateClientAddress = useCallback((value) => {
                           disabled
                           value={String(
                             (parseFloat(itemData[index]?.qty) || 0) *
-                              (parseFloat(itemData[index]?.unitPrice) || 0) -
-                              (parseFloat(itemData[index]?.discount) || 0) +
-                              (parseFloat(itemData[index]?.tax) || 0)
+                            (parseFloat(itemData[index]?.unitPrice) || 0) -
+                            (parseFloat(itemData[index]?.discount) || 0) +
+                            (parseFloat(itemData[index]?.tax) || 0)
                           )}
                         />
                       </div>

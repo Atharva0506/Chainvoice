@@ -56,6 +56,7 @@ Chainvoice transforms traditional invoicing by leveraging blockchain technology 
 - **Treasury Management** - Built-in fee management for platform sustainability
 - **Privacy Protection** - Encrypted invoice data with access control
 - **User-Friendly Interface** - Intuitive web application with wallet integration
+- **Multi-Format Export** - Export invoices as PDF, CSV, or JSON for accounting integration
 
 ## Project Structure
 
@@ -170,6 +171,43 @@ Join our community for support, updates, and discussions:
 We welcome contributions! Please read our contributing guidelines and submit pull requests for any improvements.
 
 Before making or updating any smart contract changes, please review the [Smart Contract Contribution Guidelines](https://github.com/StabilityNexus/Chainvoice/blob/main/CONTRIBUTING.md) to ensure compliance with testing, design, and review requirements.
+
+## Export Invoice Data
+
+Chainvoice supports exporting invoices in multiple formats for accounting integration and data portability.
+
+### Export as PDF
+Generates a professionally styled PDF document with full invoice details including branding, line items, and totals. Ideal for sharing with clients or printing.
+
+### Export as CSV
+Exports invoice data in comma-separated values format with the following headers:
+
+```
+InvoiceID,Status,IssueDate,DueDate,FromName,FromEmail,FromAddress,FromCity,FromCountry,FromPostalCode,ToName,ToEmail,ToAddress,ToCity,ToCountry,ToPostalCode,PaymentToken,Item,Quantity,UnitPrice,Discount,Tax,Amount,Subtotal,NetworkFee,Currency
+```
+
+Each line item in the invoice becomes a separate row. This format is compatible with accounting software like QuickBooks, Xero, and Excel.
+
+### Export as JSON
+Exports structured JSON with the complete invoice data model:
+
+```json
+{
+  "invoiceId": "000001",
+  "status": "PAID",
+  "issueDate": "2025-01-01T00:00:00.000Z",
+  "dueDate": "2025-02-01T00:00:00.000Z",
+  "from": { "name": "...", "email": "..." },
+  "billTo": { "name": "...", "email": "..." },
+  "paymentToken": { "name": "Ether", "symbol": "ETH" },
+  "items": [{ "description": "...", "quantity": 2, "unitPrice": 100, "amount": 200 }],
+  "subtotal": "200",
+  "networkFee": "0.001",
+  "currency": "ETH"
+}
+```
+
+This format is ideal for programmatic integration with APIs, ERP systems, and custom accounting workflows.
 
 <p align="center">
   <strong>Built with ❤️ by Stability Nexus.</strong>

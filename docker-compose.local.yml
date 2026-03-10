@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  local-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    ports:
+      - "8545:8545"
+    container_name: chainvoice-local-node

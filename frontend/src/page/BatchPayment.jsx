@@ -108,9 +108,8 @@ function BatchPayment() {
       .filter((inv) => !inv.isPaid && !inv.isCancelled)
       .reduce((acc, inv) => {
         const issueDate = new Date(inv.issueDate).toDateString();
-        const key = `${inv.user?.address}_${
-          inv.paymentToken?.address || "ETH"
-        }_${issueDate}`;
+        const key = `${inv.user?.address}_${inv.paymentToken?.address || "ETH"
+          }_${issueDate}`;
         if (!acc[key]) acc[key] = [];
         acc[key].push(inv);
         return acc;
@@ -281,9 +280,8 @@ function BatchPayment() {
       if (!selectedInvoices.has(invoice.id)) return;
 
       const tokenAddress = invoice.paymentToken?.address || ethers.ZeroAddress;
-      const tokenKey = `${tokenAddress}_${
-        invoice.paymentToken?.symbol || "ETH"
-      }`;
+      const tokenKey = `${tokenAddress}_${invoice.paymentToken?.symbol || "ETH"
+        }`;
 
       if (!grouped.has(tokenKey)) {
         grouped.set(tokenKey, {
@@ -311,7 +309,7 @@ function BatchPayment() {
         setLoading(true);
         if (!litClientRef.current) {
           const client = new LitNodeClient({
-            litNetwork: LIT_NETWORK.DatilDev,
+            litNetwork: LIT_NETWORK.Datil,
             debug: false,
           });
           await client.connect();
@@ -386,69 +384,77 @@ function BatchPayment() {
               continue;
             }
 
-            const ciphertext = atob(encryptedStringBase64);
-            const accessControlConditions = [
-              {
-                contractAddress: "",
-                standardContractType: "",
-                chain: "ethereum",
-                method: "",
-                parameters: [":userAddress"],
-                returnValueTest: {
-                  comparator: "=",
-                  value: from,
-                },
-              },
-              { operator: "or" },
-              {
-                contractAddress: "",
-                standardContractType: "",
-                chain: "ethereum",
-                method: "",
-                parameters: [":userAddress"],
-                returnValueTest: {
-                  comparator: "=",
-                  value: to,
-                },
-              },
-            ];
+            let decryptedString;
 
-            const sessionSigs = await litNodeClient.getSessionSigs({
-              chain: "ethereum",
-              resourceAbilityRequests: [
+            const activeChainId = Number(chainId);
+            if (activeChainId === 31337 || activeChainId === 1337) {
+              // Mock Decryption for Localhost
+              decryptedString = decodeURIComponent(escape(atob(encryptedStringBase64)));
+            } else {
+              const ciphertext = atob(encryptedStringBase64);
+              const accessControlConditions = [
                 {
-                  resource: new LitAccessControlConditionResource("*"),
-                  ability: LIT_ABILITY.AccessControlConditionDecryption,
+                  contractAddress: "",
+                  standardContractType: "",
+                  chain: "ethereum",
+                  method: "",
+                  parameters: [":userAddress"],
+                  returnValueTest: {
+                    comparator: "=",
+                    value: from,
+                  },
                 },
-              ],
-              authNeededCallback: async ({
-                uri,
-                expiration,
-                resourceAbilityRequests,
-              }) => {
-                const nonce = await litNodeClient.getLatestBlockhash();
-                const toSign = await createSiweMessageWithRecaps({
+                { operator: "or" },
+                {
+                  contractAddress: "",
+                  standardContractType: "",
+                  chain: "ethereum",
+                  method: "",
+                  parameters: [":userAddress"],
+                  returnValueTest: {
+                    comparator: "=",
+                    value: to,
+                  },
+                },
+              ];
+
+              const sessionSigs = await litNodeClient.getSessionSigs({
+                chain: "ethereum",
+                resourceAbilityRequests: [
+                  {
+                    resource: new LitAccessControlConditionResource("*"),
+                    ability: LIT_ABILITY.AccessControlConditionDecryption,
+                  },
+                ],
+                authNeededCallback: async ({
                   uri,
                   expiration,
-                  resources: resourceAbilityRequests,
-                  walletAddress: address,
-                  nonce,
-                  litNodeClient,
-                });
-                return await generateAuthSig({ signer, toSign });
-              },
-            });
+                  resourceAbilityRequests,
+                }) => {
+                  const nonce = await litNodeClient.getLatestBlockhash();
+                  const toSign = await createSiweMessageWithRecaps({
+                    uri,
+                    expiration,
+                    resources: resourceAbilityRequests,
+                    walletAddress: address,
+                    nonce,
+                    litNodeClient,
+                  });
+                  return await generateAuthSig({ signer, toSign });
+                },
+              });
 
-            const decryptedString = await decryptToString(
-              {
-                accessControlConditions,
-                chain: "ethereum",
-                ciphertext,
-                dataToEncryptHash,
-                sessionSigs,
-              },
-              litNodeClient
-            );
+              decryptedString = await decryptToString(
+                {
+                  accessControlConditions,
+                  chain: "ethereum",
+                  ciphertext,
+                  dataToEncryptHash,
+                  sessionSigs,
+                },
+                litNodeClient
+              );
+            }
 
             const parsed = JSON.parse(decryptedString);
             parsed["id"] = id;
@@ -1098,11 +1104,10 @@ function BatchPayment() {
                       .map((invoice) => (
                         <tr
                           key={invoice.id}
-                          className={`hover:bg-gray-50 ${
-                            selectedInvoices.has(invoice.id)
-                              ? "bg-green-50"
-                              : ""
-                          }`}
+                          className={`hover:bg-gray-50 ${selectedInvoices.has(invoice.id)
+                            ? "bg-green-50"
+                            : ""
+                            }`}
                         >
                           <td className="px-6 py-4">
                             <input
@@ -1220,15 +1225,14 @@ function BatchPayment() {
                                       invoice.id,
                                       invoice.amountDue,
                                       invoice.paymentToken?.address ??
-                                        ethers.ZeroAddress
+                                      ethers.ZeroAddress
                                     )
                                   }
                                   disabled={paymentLoading[invoice.id]}
-                                  className={`px-3 py-1 rounded-md text-sm font-medium flex items-center ${
-                                    paymentLoading[invoice.id]
-                                      ? "bg-gray-300 text-gray-600"
-                                      : "bg-green-600 hover:bg-green-700 text-white"
-                                  }`}
+                                  className={`px-3 py-1 rounded-md text-sm font-medium flex items-center ${paymentLoading[invoice.id]
+                                    ? "bg-gray-300 text-gray-600"
+                                    : "bg-green-600 hover:bg-green-700 text-white"
+                                    }`}
                                 >
                                   {paymentLoading[invoice.id] ? (
                                     <>
@@ -1458,11 +1462,11 @@ function BatchPayment() {
                       <p className="text-xs text-gray-600">
                         {drawerState.selectedInvoice.paymentToken?.address
                           ? `${drawerState.selectedInvoice.paymentToken.address.substring(
-                              0,
-                              10
-                            )}......${drawerState.selectedInvoice.paymentToken.address.substring(
-                              33
-                            )}`
+                            0,
+                            10
+                          )}......${drawerState.selectedInvoice.paymentToken.address.substring(
+                            33
+                          )}`
                           : "Native Currency"}
                       </p>
                     </div>
@@ -1551,14 +1555,13 @@ function BatchPayment() {
                     <span className="font-medium">Total Amount:</span>
                     <span className="font-bold text-lg">
                       {drawerState.selectedInvoice.paymentToken?.symbol ===
-                      "ETH"
+                        "ETH"
                         ? `${(
-                            parseFloat(drawerState.selectedInvoice.amountDue) +
-                            parseFloat(ethers.formatUnits(fee))
-                          ).toFixed(6)} ETH`
-                        : `${drawerState.selectedInvoice.amountDue} ${
-                            drawerState.selectedInvoice.paymentToken?.symbol
-                          } + ${ethers.formatUnits(fee)} ETH`}
+                          parseFloat(drawerState.selectedInvoice.amountDue) +
+                          parseFloat(ethers.formatUnits(fee))
+                        ).toFixed(6)} ETH`
+                        : `${drawerState.selectedInvoice.amountDue} ${drawerState.selectedInvoice.paymentToken?.symbol
+                        } + ${ethers.formatUnits(fee)} ETH`}
                     </span>
                   </div>
                 </div>

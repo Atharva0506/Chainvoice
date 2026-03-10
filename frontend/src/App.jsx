@@ -7,7 +7,7 @@ import {
 import { WagmiProvider } from "wagmi";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import * as chains from "wagmi/chains";
-import { mainnet, classic, base, bsc, polygon, sepolia } from "wagmi/chains";
+import { mainnet, classic, base, bsc, polygon, sepolia, foundry } from "wagmi/chains";
 import { HashRouter as Router, Route, Routes } from "react-router-dom";
 
 import Landing from "./page/Landing";
@@ -23,7 +23,7 @@ import CreateInvoice from "./page/CreateInvoice";
 import SentInvoice from "./page/SentInvoice";
 import ReceivedInvoice from "./page/ReceivedInvoice";
 
-const AllChains = [mainnet, classic, base, bsc, polygon, sepolia];
+const AllChains = [mainnet, classic, base, bsc, polygon, sepolia, foundry];
 
 export const config = getDefaultConfig({
   appName: "Chainvoice",

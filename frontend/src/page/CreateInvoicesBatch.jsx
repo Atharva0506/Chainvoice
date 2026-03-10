@@ -137,7 +137,7 @@ function CreateInvoicesBatch() {
     const initLit = async () => {
       if (!litClientRef.current) {
         const client = new LitNodeClient({
-          litNetwork: LIT_NETWORK.DatilDev,
+          litNetwork: LIT_NETWORK.Datil,
           debug: false,
         });
         await client.connect();
@@ -398,71 +398,83 @@ function CreateInvoicesBatch() {
 
         const invoiceString = JSON.stringify(invoicePayload);
 
-        const accessControlConditions = [
-          {
-            contractAddress: "",
-            standardContractType: "",
-            chain: "ethereum",
-            method: "",
-            parameters: [":userAddress"],
-            returnValueTest: {
-              comparator: "=",
-              value: account.address.toLowerCase(),
-            },
-          },
-          { operator: "or" },
-          {
-            contractAddress: "",
-            standardContractType: "",
-            chain: "ethereum",
-            method: "",
-            parameters: [":userAddress"],
-            returnValueTest: {
-              comparator: "=",
-              value: row.clientAddress.toLowerCase(),
-            },
-          },
-        ];
+        let encryptedStringBase64;
+        let finalDataToEncryptHash = "mock_hash";
 
-        const { ciphertext, dataToEncryptHash } = await encryptString(
-          {
-            accessControlConditions,
-            dataToEncrypt: invoiceString,
-          },
-          litNodeClient
-        );
+        const currentChainId = account?.chainId || account?.chain?.id;
 
-        const sessionSigs = await litNodeClient.getSessionSigs({
-          chain: "ethereum",
-          resourceAbilityRequests: [
+        if (currentChainId === 31337) {
+          // Mock Encryption for Localhost
+          encryptedStringBase64 = btoa(unescape(encodeURIComponent(invoiceString)));
+        } else {
+          const accessControlConditions = [
             {
-              resource: new LitAccessControlConditionResource("*"),
-              ability: LIT_ABILITY.AccessControlConditionDecryption,
+              contractAddress: "",
+              standardContractType: "",
+              chain: "ethereum",
+              method: "",
+              parameters: [":userAddress"],
+              returnValueTest: {
+                comparator: "=",
+                value: account.address.toLowerCase(),
+              },
             },
-          ],
-          authNeededCallback: async ({
-            uri,
-            expiration,
-            resourceAbilityRequests,
-          }) => {
-            const nonce = await litNodeClient.getLatestBlockhash();
-            const toSign = await createSiweMessageWithRecaps({
+            { operator: "or" },
+            {
+              contractAddress: "",
+              standardContractType: "",
+              chain: "ethereum",
+              method: "",
+              parameters: [":userAddress"],
+              returnValueTest: {
+                comparator: "=",
+                value: row.clientAddress.toLowerCase(),
+              },
+            },
+          ];
+
+          const { ciphertext, dataToEncryptHash } = await encryptString(
+            {
+              accessControlConditions,
+              dataToEncrypt: invoiceString,
+            },
+            litNodeClient
+          );
+
+          finalDataToEncryptHash = dataToEncryptHash;
+
+          const sessionSigs = await litNodeClient.getSessionSigs({
+            chain: "ethereum",
+            resourceAbilityRequests: [
+              {
+                resource: new LitAccessControlConditionResource("*"),
+                ability: LIT_ABILITY.AccessControlConditionDecryption,
+              },
+            ],
+            authNeededCallback: async ({
               uri,
               expiration,
-              resources: resourceAbilityRequests,
-              walletAddress: account.address,
-              nonce,
-              litNodeClient,
-            });
+              resourceAbilityRequests,
+            }) => {
+              const nonce = await litNodeClient.getLatestBlockhash();
+              const toSign = await createSiweMessageWithRecaps({
+                uri,
+                expiration,
+                resources: resourceAbilityRequests,
+                walletAddress: account.address,
+                nonce,
+                litNodeClient,
+              });
 
-            return await generateAuthSig({
-              signer,
-              toSign,
-            });
-          },
-        });
+              return await generateAuthSig({
+                signer,
+                toSign,
+              });
+            },
+          });
 
-        const encryptedStringBase64 = btoa(ciphertext);
+          encryptedStringBase64 = btoa(ciphertext);
+        }
 
         // Add to batch arrays
         tos.push(row.clientAddress);
@@ -473,19 +485,22 @@ function CreateInvoicesBatch() {
           )
         );
         encryptedPayloads.push(encryptedStringBase64);
-        encryptedHashes.push(dataToEncryptHash);
+        encryptedHashes.push(finalDataToEncryptHash);
       }
 
       toast.success("All invoices encrypted successfully!");
       toast.info("Submitting batch transaction to blockchain...");
 
       // Send to contract
-      const contractAddress = import.meta.env[
-        `VITE_CONTRACT_ADDRESS_${chainId}`
-      ];
+      const activeChainId = Number(chainId || account?.chainId || account?.chain?.id);
+      const contractAddress = (activeChainId === 31337 || activeChainId === 1337)
+        ? "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+        : (import.meta.env[`VITE_CONTRACT_ADDRESS_${chainId}`] || import.meta.env[`VITE_CONTRACT_ADDRESS_${account?.chain?.id}`]);
+
+      console.log("Current Chain ID:", activeChainId, "Found Contract Address:", contractAddress);
 
       if (!contractAddress) {
-        throw new Error("Unsupported network");
+        throw new Error(`Unsupported network: ${activeChainId}`);
       }
 
       const contract = new Contract(contractAddress, ChainvoiceABI, signer);
@@ -505,8 +520,7 @@ function CreateInvoicesBatch() {
         `Successfully created ${validInvoices.length} invoices in batch!`
       );
       toast.success(
-        `Gas saved: ~${
-          (validInvoices.length - 1) * 75
+        `Gas saved: ~${(validInvoices.length - 1) * 75
         }% compared to individual transactions!`
       );
 
@@ -945,9 +959,9 @@ function CreateInvoicesBatch() {
                       <div className="text-sm text-gray-500">
                         {row.clientAddress
                           ? `${row.clientAddress.slice(
-                              0,
-                              8
-                            )}...${row.clientAddress.slice(-6)}`
+                            0,
+                            8
+                          )}...${row.clientAddress.slice(-6)}`
                           : "No client"}
                       </div>
                       <div className="font-semibold text-gray-800">
@@ -1186,7 +1200,7 @@ function CreateInvoicesBatch() {
                                 <div className="bg-gray-100 px-3 py-2 rounded border text-gray-700 font-mono text-sm">
                                   {(
                                     (parseFloat(item.qty) || 0) *
-                                      (parseFloat(item.unitPrice) || 0) -
+                                    (parseFloat(item.unitPrice) || 0) -
                                     (parseFloat(item.discount) || 0) +
                                     (parseFloat(item.tax) || 0)
                                   ).toFixed(4)}
