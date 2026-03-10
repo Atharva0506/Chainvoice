@@ -96,6 +96,7 @@ function ReceivedInvoice() {
   const [paymentLoading, setPaymentLoading] = useState({});
   const [networkLoading, setNetworkLoading] = useState(false);
   const [showWalletAlert, setShowWalletAlert] = useState(!isConnected);
+  const isLocalDevChain = Number(chainId) === 31337 || Number(chainId) === 1337;
 
   // Error handling states
   const [paymentError, setPaymentError] = useState("");
@@ -634,6 +635,11 @@ function ReceivedInvoice() {
   // Initialize Lit Protocol
   useEffect(() => {
     const initLit = async () => {
+      if (isLocalDevChain) {
+        setLitReady(true);
+        return;
+      }
+
       try {
         setLoading(true);
         if (!litClientRef.current) {
@@ -652,7 +658,7 @@ function ReceivedInvoice() {
       }
     };
     initLit();
-  }, []);
+  }, [isLocalDevChain]);
 
   useEffect(() => {
     setShowWalletAlert(!isConnected);
@@ -660,7 +666,7 @@ function ReceivedInvoice() {
 
   // Fetch invoices
   useEffect(() => {
-    if (!walletClient || !address || !litReady) return;
+    if (!walletClient || !address || (!isLocalDevChain && !litReady)) return;
 
     const fetchReceivedInvoices = async () => {
       try {
@@ -670,7 +676,7 @@ function ReceivedInvoice() {
         const signer = await provider.getSigner();
 
         const litNodeClient = litClientRef.current;
-        if (!litNodeClient) {
+        if (!isLocalDevChain && !litNodeClient) {
           setError("Lit client not initialized. Please refresh the page.");
           setLoading(false);
           return;
@@ -706,76 +712,83 @@ function ReceivedInvoice() {
             const encryptedStringBase64 = invoice[7];
             const dataToEncryptHash = invoice[8];
 
-            if (!encryptedStringBase64 || !dataToEncryptHash) continue;
+            if (!encryptedStringBase64) continue;
+            if (!isLocalDevChain && !dataToEncryptHash) continue;
 
             const currentUserAddress = address.toLowerCase();
             if (currentUserAddress !== from && currentUserAddress !== to) {
               continue;
             }
 
-            const ciphertext = atob(encryptedStringBase64);
-            const accessControlConditions = [
-              {
-                contractAddress: "",
-                standardContractType: "",
-                chain: "ethereum",
-                method: "",
-                parameters: [":userAddress"],
-                returnValueTest: {
-                  comparator: "=",
-                  value: from,
-                },
-              },
-              { operator: "or" },
-              {
-                contractAddress: "",
-                standardContractType: "",
-                chain: "ethereum",
-                method: "",
-                parameters: [":userAddress"],
-                returnValueTest: {
-                  comparator: "=",
-                  value: to,
-                },
-              },
-            ];
-
-            const sessionSigs = await litNodeClient.getSessionSigs({
-              chain: "ethereum",
-              resourceAbilityRequests: [
+            let decryptedString;
+            if (isLocalDevChain) {
+              // Local Docker/Anvil mode stores metadata as base64 JSON.
+              decryptedString = decodeURIComponent(escape(atob(encryptedStringBase64)));
+            } else {
+              const ciphertext = atob(encryptedStringBase64);
+              const accessControlConditions = [
                 {
-                  resource: new LitAccessControlConditionResource("*"),
-                  ability: LIT_ABILITY.AccessControlConditionDecryption,
+                  contractAddress: "",
+                  standardContractType: "",
+                  chain: "ethereum",
+                  method: "",
+                  parameters: [":userAddress"],
+                  returnValueTest: {
+                    comparator: "=",
+                    value: from,
+                  },
                 },
-              ],
-              authNeededCallback: async ({
-                uri,
-                expiration,
-                resourceAbilityRequests,
-              }) => {
-                const nonce = await litNodeClient.getLatestBlockhash();
-                const toSign = await createSiweMessageWithRecaps({
+                { operator: "or" },
+                {
+                  contractAddress: "",
+                  standardContractType: "",
+                  chain: "ethereum",
+                  method: "",
+                  parameters: [":userAddress"],
+                  returnValueTest: {
+                    comparator: "=",
+                    value: to,
+                  },
+                },
+              ];
+
+              const sessionSigs = await litNodeClient.getSessionSigs({
+                chain: "ethereum",
+                resourceAbilityRequests: [
+                  {
+                    resource: new LitAccessControlConditionResource("*"),
+                    ability: LIT_ABILITY.AccessControlConditionDecryption,
+                  },
+                ],
+                authNeededCallback: async ({
                   uri,
                   expiration,
-                  resources: resourceAbilityRequests,
-                  walletAddress: address,
-                  nonce,
-                  litNodeClient,
-                });
-                return await generateAuthSig({ signer, toSign });
-              },
-            });
+                  resourceAbilityRequests,
+                }) => {
+                  const nonce = await litNodeClient.getLatestBlockhash();
+                  const toSign = await createSiweMessageWithRecaps({
+                    uri,
+                    expiration,
+                    resources: resourceAbilityRequests,
+                    walletAddress: address,
+                    nonce,
+                    litNodeClient,
+                  });
+                  return await generateAuthSig({ signer, toSign });
+                },
+              });
 
-            const decryptedString = await decryptToString(
-              {
-                accessControlConditions,
-                chain: "ethereum",
-                ciphertext,
-                dataToEncryptHash,
-                sessionSigs,
-              },
-              litNodeClient
-            );
+              decryptedString = await decryptToString(
+                {
+                  accessControlConditions,
+                  chain: "ethereum",
+                  ciphertext,
+                  dataToEncryptHash,
+                  sessionSigs,
+                },
+                litNodeClient
+              );
+            }
 
             const parsed = JSON.parse(decryptedString);
             parsed["id"] = id;
@@ -854,7 +867,7 @@ function ReceivedInvoice() {
     };
 
     fetchReceivedInvoices();
-  }, [walletClient, litReady, address, tokens]);
+  }, [walletClient, litReady, address, tokens, isLocalDevChain]);
 
   const toggleDrawer = (invoice) => (event) => {
     if (
