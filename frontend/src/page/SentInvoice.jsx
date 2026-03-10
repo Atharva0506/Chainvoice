@@ -16,6 +16,7 @@ import { useRef } from "react";
 import { generateInvoicePDF } from "@/utils/generateInvoicePDF";
 import { downloadInvoiceCSV } from "@/utils/generateInvoiceCSV";
 import { downloadInvoiceJSON } from "@/utils/generateInvoiceJSON";
+import { formatInvoiceTotal } from "@/utils/invoiceExportHelpers";
 import { LitNodeClient } from "@lit-protocol/lit-node-client";
 import { decryptToString } from "@lit-protocol/encryption/src/lib/encryption.js";
 import { LIT_ABILITY, LIT_NETWORK } from "@lit-protocol/constants";
@@ -33,7 +34,6 @@ import {
   Avatar,
   Tooltip,
   IconButton,
-  Typography,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -41,7 +41,13 @@ import {
   DialogActions,
   Button,
   Alert,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+  Typography,
 } from "@mui/material";
+import { getWagmiChainInfo } from "@/utils/wagmiChainHelpers";
 import PaidIcon from "@mui/icons-material/CheckCircle";
 import UnpaidIcon from "@mui/icons-material/Pending";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -67,6 +73,9 @@ function SentInvoice() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const { data: walletClient } = useWalletClient();
   const { address, isConnected, chainId } = useAccount();
+
+  const [anchorEl, setAnchorEl] = useState(null);
+  const openExportMenu = Boolean(anchorEl);
 
   const [loading, setLoading] = useState(true);
   const [sentInvoices, setSentInvoices] = useState([]);
@@ -126,7 +135,7 @@ function SentInvoice() {
         setLoading(true);
         if (!litClientRef.current) {
           const client = new LitNodeClient({
-            litNetwork: LIT_NETWORK.Datil,
+            litNetwork: LIT_NETWORK.DatilDev,
             debug: false,
           });
           await client.connect();
@@ -161,7 +170,6 @@ function SentInvoice() {
           alert("Lit client not initialized");
           return;
         }
-        console.log("chainid", chainId)
         const contractAddress = import.meta.env[
           `VITE_CONTRACT_ADDRESS_${chainId}`
         ];
@@ -202,77 +210,69 @@ function SentInvoice() {
               continue;
             }
 
-            let decryptedString;
-
-            const activeChainId = Number(chainId);
-            if (activeChainId === 31337 || activeChainId === 1337) {
-              // Mock Decryption for Localhost
-              decryptedString = decodeURIComponent(escape(atob(encryptedStringBase64)));
-            } else {
-              const ciphertext = atob(encryptedStringBase64);
-              const accessControlConditions = [
-                {
-                  contractAddress: "",
-                  standardContractType: "",
-                  chain: "ethereum",
-                  method: "",
-                  parameters: [":userAddress"],
-                  returnValueTest: {
-                    comparator: "=",
-                    value: from,
-                  },
-                },
-                { operator: "or" },
-                {
-                  contractAddress: "",
-                  standardContractType: "",
-                  chain: "ethereum",
-                  method: "",
-                  parameters: [":userAddress"],
-                  returnValueTest: {
-                    comparator: "=",
-                    value: to,
-                  },
-                },
-              ];
-
-              const sessionSigs = await litNodeClient.getSessionSigs({
+            const ciphertext = atob(encryptedStringBase64);
+            const accessControlConditions = [
+              {
+                contractAddress: "",
+                standardContractType: "",
                 chain: "ethereum",
-                resourceAbilityRequests: [
-                  {
-                    resource: new LitAccessControlConditionResource("*"),
-                    ability: LIT_ABILITY.AccessControlConditionDecryption,
-                  },
-                ],
-                authNeededCallback: async ({
+                method: "",
+                parameters: [":userAddress"],
+                returnValueTest: {
+                  comparator: "=",
+                  value: from,
+                },
+              },
+              { operator: "or" },
+              {
+                contractAddress: "",
+                standardContractType: "",
+                chain: "ethereum",
+                method: "",
+                parameters: [":userAddress"],
+                returnValueTest: {
+                  comparator: "=",
+                  value: to,
+                },
+              },
+            ];
+
+            const sessionSigs = await litNodeClient.getSessionSigs({
+              chain: "ethereum",
+              resourceAbilityRequests: [
+                {
+                  resource: new LitAccessControlConditionResource("*"),
+                  ability: LIT_ABILITY.AccessControlConditionDecryption,
+                },
+              ],
+              authNeededCallback: async ({
+                uri,
+                expiration,
+                resourceAbilityRequests,
+              }) => {
+                const nonce = await litNodeClient.getLatestBlockhash();
+                const toSign = await createSiweMessageWithRecaps({
                   uri,
                   expiration,
-                  resourceAbilityRequests,
-                }) => {
-                  const nonce = await litNodeClient.getLatestBlockhash();
-                  const toSign = await createSiweMessageWithRecaps({
-                    uri,
-                    expiration,
-                    resources: resourceAbilityRequests,
-                    walletAddress: address,
-                    nonce,
-                    litNodeClient,
-                  });
-                  return await generateAuthSig({ signer, toSign });
-                },
-              });
+                  resources: resourceAbilityRequests,
+                  walletAddress: address,
+                  nonce,
+                  litNodeClient,
+                });
+                return await generateAuthSig({ signer, toSign });
+              },
+            });
 
-              decryptedString = await decryptToString(
-                {
-                  accessControlConditions,
-                  chain: "ethereum",
-                  ciphertext,
-                  dataToEncryptHash,
-                  sessionSigs,
-                },
-                litNodeClient
-              );
-            }
+            const decryptedString = await decryptToString(
+              {
+                accessControlConditions,
+                chain: "ethereum",
+                ciphertext,
+                dataToEncryptHash,
+                sessionSigs,
+              },
+              litNodeClient
+            );
 
             const parsed = JSON.parse(decryptedString);
             parsed["id"] = id;
@@ -367,13 +367,20 @@ function SentInvoice() {
     ) {
       return;
     }
+    setAnchorEl(null);
     setDrawerState({
       open: !drawerState.open,
       selectedInvoice: invoice || null,
     });
   };
 
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const handleExportClick = (event) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleExportClose = () => {
+    setAnchorEl(null);
+  };
 
   const handlePrint = async () => {
     if (!drawerState.selectedInvoice) {
@@ -405,7 +412,7 @@ function SentInvoice() {
       console.error("Error generating CSV:", error);
       toast.error("Failed to generate CSV. Please try again.");
     }
-    setExportMenuOpen(false);
+    handleExportClose();
   };
 
   const handleExportJSON = () => {
@@ -420,7 +427,7 @@ function SentInvoice() {
       console.error("Error generating JSON:", error);
       toast.error("Failed to generate JSON. Please try again.");
     }
-    setExportMenuOpen(false);
+    handleExportClose();
   };
 
   const handleCancelInvoice = async (invoiceId) => {
@@ -1035,19 +1042,14 @@ function SentInvoice() {
                 <div className="flex justify-between pt-2 border-t border-gray-200">
                   <span className="font-medium">Total Amount:</span>
                   <span className="font-bold text-lg">
-                    {drawerState.selectedInvoice.paymentToken?.symbol === "ETH"
-                      ? `${(
-                        parseFloat(drawerState.selectedInvoice.amountDue) +
-                        parseFloat(ethers.formatUnits(fee))
-                      ).toFixed(6)} ETH`
-                      : `${drawerState.selectedInvoice.amountDue} ${drawerState.selectedInvoice.paymentToken?.symbol
-                      } + ${ethers.formatUnits(fee)} ETH`}
+                    {formatInvoiceTotal(drawerState.selectedInvoice, fee, chainId)}
                   </span>
                 </div>
               </div>
 
               <div className="mt-8 flex justify-between items-center">
                 <button
+                  type="button"
                   onClick={toggleDrawer(null)}
                   className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
                 >
@@ -1055,39 +1057,50 @@ function SentInvoice() {
                 </button>
                 <div className="relative">
                   <button
-                    onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                    type="button"
+                    onClick={handleExportClick}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium flex items-center"
                     aria-haspopup="true"
-                    aria-expanded={exportMenuOpen}
+                    aria-expanded={openExportMenu}
                   >
                     <DownloadIcon className="mr-2" fontSize="small" />
                     Export Invoice
                   </button>
-                  {exportMenuOpen && (
-                    <div className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-md shadow-lg border border-gray-200 z-50">
-                      <button
-                        onClick={() => { handlePrint(); setExportMenuOpen(false); }}
-                        className="w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center rounded-t-md"
-                      >
-                        <PictureAsPdfIcon className="mr-2 text-red-500" fontSize="small" />
-                        Export as PDF
-                      </button>
-                      <button
-                        onClick={handleExportCSV}
-                        className="w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
-                      >
-                        <TableChartIcon className="mr-2 text-green-600" fontSize="small" />
-                        Export as CSV
-                      </button>
-                      <button
-                        onClick={handleExportJSON}
-                        className="w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center rounded-b-md"
-                      >
-                        <DataObjectIcon className="mr-2 text-blue-500" fontSize="small" />
-                        Export as JSON
-                      </button>
-                    </div>
-                  )}
+                  <Menu
+                    anchorEl={anchorEl}
+                    open={openExportMenu}
+                    onClose={handleExportClose}
+                    anchorOrigin={{
+                      vertical: "top",
+                      horizontal: "right",
+                    }}
+                    transformOrigin={{
+                      vertical: "bottom",
+                      horizontal: "right",
+                    }}
+                    PaperProps={{
+                      sx: { mb: 1, width: 200 }
+                    }}
+                  >
+                    <MenuItem onClick={() => { handlePrint(); handleExportClose(); }}>
+                      <ListItemIcon>
+                        <PictureAsPdfIcon fontSize="small" sx={{ color: "#ef4444" }} />
+                      </ListItemIcon>
+                      <ListItemText>Export as PDF</ListItemText>
+                    </MenuItem>
+                    <MenuItem onClick={handleExportCSV}>
+                      <ListItemIcon>
+                        <TableChartIcon fontSize="small" sx={{ color: "#16a34a" }} />
+                      </ListItemIcon>
+                      <ListItemText>Export as CSV</ListItemText>
+                    </MenuItem>
+                    <MenuItem onClick={handleExportJSON}>
+                      <ListItemIcon>
+                        <DataObjectIcon fontSize="small" sx={{ color: "#3b82f6" }} />
+                      </ListItemIcon>
+                      <ListItemText>Export as JSON</ListItemText>
+                    </MenuItem>
+                  </Menu>
                 </div>
               </div>
             </div>

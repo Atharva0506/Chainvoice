@@ -1,4 +1,14 @@
-import { ethers } from "ethers";
+"use client";
+
+import {
+  resolveChainMeta,
+  formatNetworkFee,
+  formatInvoiceId,
+  resolveStatus,
+  buildParty,
+  normalizeItem,
+  toISODate,
+} from "./invoiceExportHelpers";
 
 /**
  * Generate structured JSON object from invoice data
@@ -11,62 +21,27 @@ const generateJSONContent = (invoice, fee = 0) => {
     throw new Error("Invoice is required");
   }
 
-  const tokenSymbol = invoice.paymentToken?.symbol || "ETH";
-
-  let networkFee;
-  try {
-    networkFee = ethers.formatUnits(fee);
-  } catch {
-    networkFee = "0";
-  }
+  const { chainId, nativeSymbol, nativeName, tokenSymbol } = resolveChainMeta(invoice);
+  const networkFee = formatNetworkFee(fee);
 
   return {
-    invoiceId: invoice.id.toString().padStart(6, "0"),
-    status: invoice.isCancelled
-      ? "CANCELLED"
-      : invoice.isPaid
-      ? "PAID"
-      : "UNPAID",
-    issueDate: new Date(invoice.issueDate).toISOString(),
-    dueDate: new Date(invoice.dueDate).toISOString(),
-    from: {
-      name:
-        `${invoice.user?.fname || ""} ${invoice.user?.lname || ""}`.trim() ||
-        null,
-      email: invoice.user?.email || null,
-      address: invoice.user?.address || null,
-      city: invoice.user?.city || null,
-      country: invoice.user?.country || null,
-      postalCode: invoice.user?.postalcode || null,
-    },
-    billTo: {
-      name:
-        `${invoice.client?.fname || ""} ${invoice.client?.lname || ""}`.trim() ||
-        null,
-      email: invoice.client?.email || null,
-      address: invoice.client?.address || null,
-      city: invoice.client?.city || null,
-      country: invoice.client?.country || null,
-      postalCode: invoice.client?.postalcode || null,
-    },
+    invoiceId: formatInvoiceId(invoice),
+    status: resolveStatus(invoice),
+    issueDate: toISODate(invoice.issueDate),
+    dueDate: toISODate(invoice.dueDate),
+    from: buildParty(invoice.user),
+    billTo: buildParty(invoice.client),
     paymentToken: {
-      name: invoice.paymentToken?.name || "Ether",
+      name: invoice.paymentToken?.name || nativeName,
       symbol: tokenSymbol,
       address: invoice.paymentToken?.address || null,
-      decimals: invoice.paymentToken?.decimals || 18,
-      chainId: invoice.paymentToken?.chainId || invoice.chainId || null,
+      decimals: invoice.paymentToken?.decimals ?? 18,
+      chainId: chainId || null,
     },
-    items: (invoice.items || []).map((item) => ({
-      description: item.description || "N/A",
-      quantity: item.qty || 0,
-      unitPrice: item.unitPrice || 0,
-      discount: item.discount || "0",
-      tax: item.tax || "0%",
-      amount: item.amount || 0,
-    })),
+    items: (invoice.items || []).map(normalizeItem),
     subtotal: invoice.amountDue || "0",
     networkFee: networkFee,
-    networkFeeCurrency: "ETH",
+    networkFeeCurrency: nativeSymbol,
     currency: tokenSymbol,
   };
 };

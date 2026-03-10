@@ -1,4 +1,13 @@
-import { ethers } from "ethers";
+"use client";
+
+import {
+  resolveChainMeta,
+  formatNetworkFee,
+  formatInvoiceId,
+  resolveStatus,
+  buildParty,
+  toDisplayDate,
+} from "./invoiceExportHelpers";
 
 /**
  * Generate CSV string from invoice data
@@ -11,51 +20,25 @@ const generateCSVContent = (invoice, fee = 0) => {
     throw new Error("Invoice is required");
   }
 
-  const tokenSymbol = invoice.paymentToken?.symbol || "ETH";
-  const invoiceId = invoice.id.toString().padStart(6, "0");
-  const status = invoice.isCancelled
-    ? "CANCELLED"
-    : invoice.isPaid
-    ? "PAID"
-    : "UNPAID";
-
-  const fromName =
-    `${invoice.user?.fname || ""} ${invoice.user?.lname || ""}`.trim() || "N/A";
-  const fromEmail = invoice.user?.email || "N/A";
-  const fromAddress = invoice.user?.address || "N/A";
-  const fromCity = invoice.user?.city || "";
-  const fromCountry = invoice.user?.country || "";
-  const fromPostal = invoice.user?.postalcode || "";
-
-  const toName =
-    `${invoice.client?.fname || ""} ${invoice.client?.lname || ""}`.trim() ||
-    "N/A";
-  const toEmail = invoice.client?.email || "N/A";
-  const toAddress = invoice.client?.address || "N/A";
-  const toCity = invoice.client?.city || "";
-  const toCountry = invoice.client?.country || "";
-  const toPostal = invoice.client?.postalcode || "";
-
-  const issueDate = new Date(invoice.issueDate).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-  const dueDate = new Date(invoice.dueDate).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-
-  let networkFee;
-  try {
-    networkFee = ethers.formatUnits(fee);
-  } catch {
-    networkFee = "0";
-  }
+  const { nativeSymbol, tokenSymbol } = resolveChainMeta(invoice);
+  const invoiceId = formatInvoiceId(invoice);
+  const status = resolveStatus(invoice);
+  const from = buildParty(invoice.user, "N/A");
+  const to = buildParty(invoice.client, "N/A");
+  const issueDate = toDisplayDate(invoice.issueDate);
+  const dueDate = toDisplayDate(invoice.dueDate);
+  const networkFee = formatNetworkFee(fee);
 
   const escapeCSV = (value) => {
-    const str = String(value ?? "");
+    let str = String(value ?? "");
+
+    // Mitigate CSV/Excel formula injection
+    // Neutralize cells beginning with =, +, -, or @ (even after leading whitespace)
+    const trimmed = str.trimStart();
+    if (/^[=+\-@]/.test(trimmed)) {
+      str = `'${str}`;
+    }
+
     if (str.includes(",") || str.includes('"') || str.includes("\n")) {
       return `"${str.replace(/"/g, '""')}"`;
     }
@@ -92,6 +75,7 @@ const generateCSVContent = (invoice, fee = 0) => {
       "Amount",
       "Subtotal",
       "NetworkFee",
+      "NetworkFeeCurrency",
       "Currency",
     ].join(",")
   );
@@ -105,18 +89,18 @@ const generateCSVContent = (invoice, fee = 0) => {
         escapeCSV(status),
         escapeCSV(issueDate),
         escapeCSV(dueDate),
-        escapeCSV(fromName),
-        escapeCSV(fromEmail),
-        escapeCSV(fromAddress),
-        escapeCSV(fromCity),
-        escapeCSV(fromCountry),
-        escapeCSV(fromPostal),
-        escapeCSV(toName),
-        escapeCSV(toEmail),
-        escapeCSV(toAddress),
-        escapeCSV(toCity),
-        escapeCSV(toCountry),
-        escapeCSV(toPostal),
+        escapeCSV(from.name),
+        escapeCSV(from.email),
+        escapeCSV(from.address),
+        escapeCSV(from.city || ""),
+        escapeCSV(from.country || ""),
+        escapeCSV(from.postalCode || ""),
+        escapeCSV(to.name),
+        escapeCSV(to.email),
+        escapeCSV(to.address),
+        escapeCSV(to.city || ""),
+        escapeCSV(to.country || ""),
+        escapeCSV(to.postalCode || ""),
         escapeCSV(tokenSymbol),
         "",
         "",
@@ -126,29 +110,31 @@ const generateCSVContent = (invoice, fee = 0) => {
         "",
         escapeCSV(invoice.amountDue),
         escapeCSV(networkFee),
+        escapeCSV(nativeSymbol),
         escapeCSV(tokenSymbol),
       ].join(",")
     );
   } else {
-    items.forEach((item) => {
+    items.forEach((item, index) => {
+      const isFirstRow = index === 0;
       rows.push(
         [
           escapeCSV(invoiceId),
           escapeCSV(status),
           escapeCSV(issueDate),
           escapeCSV(dueDate),
-          escapeCSV(fromName),
-          escapeCSV(fromEmail),
-          escapeCSV(fromAddress),
-          escapeCSV(fromCity),
-          escapeCSV(fromCountry),
-          escapeCSV(fromPostal),
-          escapeCSV(toName),
-          escapeCSV(toEmail),
-          escapeCSV(toAddress),
-          escapeCSV(toCity),
-          escapeCSV(toCountry),
-          escapeCSV(toPostal),
+          escapeCSV(from.name),
+          escapeCSV(from.email),
+          escapeCSV(from.address),
+          escapeCSV(from.city || ""),
+          escapeCSV(from.country || ""),
+          escapeCSV(from.postalCode || ""),
+          escapeCSV(to.name),
+          escapeCSV(to.email),
+          escapeCSV(to.address),
+          escapeCSV(to.city || ""),
+          escapeCSV(to.country || ""),
+          escapeCSV(to.postalCode || ""),
           escapeCSV(tokenSymbol),
           escapeCSV(item.description || "N/A"),
           escapeCSV(item.qty || 0),
@@ -156,9 +142,10 @@ const generateCSVContent = (invoice, fee = 0) => {
           escapeCSV(item.discount || "0"),
           escapeCSV(item.tax || "0%"),
           escapeCSV(item.amount || 0),
-          escapeCSV(invoice.amountDue),
-          escapeCSV(networkFee),
-          escapeCSV(tokenSymbol),
+          isFirstRow ? escapeCSV(invoice.amountDue) : "",
+          isFirstRow ? escapeCSV(networkFee) : "",
+          isFirstRow ? escapeCSV(nativeSymbol) : "",
+          isFirstRow ? escapeCSV(tokenSymbol) : "",
         ].join(",")
       );
     });
@@ -174,7 +161,8 @@ const generateCSVContent = (invoice, fee = 0) => {
  */
 export const downloadInvoiceCSV = (invoice, fee = 0) => {
   const csvContent = generateCSVContent(invoice, fee);
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const BOM = "\uFEFF";
+  const blob = new Blob([BOM + csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
