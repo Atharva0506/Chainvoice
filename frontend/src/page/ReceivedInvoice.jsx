@@ -898,13 +898,24 @@ function ReceivedInvoice() {
   };
 
   const handleExportCSV = () => {
-    if (!drawerState.selectedInvoice) {
+    // Determine the set of invoices to export
+    const selected = receivedInvoices.filter((inv) =>
+      selectedInvoices.has(inv.id)
+    );
+    const target = selected.length > 0 ? selected : drawerState.selectedInvoice;
+
+    if (!target || (Array.isArray(target) && target.length === 0)) {
       toast.error("No invoice selected");
       return;
     }
+
     try {
-      downloadInvoiceCSV(drawerState.selectedInvoice, fee);
-      toast.success("CSV downloaded successfully!");
+      downloadInvoiceCSV(target, fee);
+      toast.success(
+        Array.isArray(target) && target.length > 1
+          ? "Selected invoices exported to CSV!"
+          : "CSV downloaded successfully!"
+      );
     } catch (error) {
       console.error("Error generating CSV:", error);
       toast.error("Failed to generate CSV. Please try again.");
@@ -913,13 +924,24 @@ function ReceivedInvoice() {
   };
 
   const handleExportJSON = () => {
-    if (!drawerState.selectedInvoice) {
+    // Determine the set of invoices to export
+    const selected = receivedInvoices.filter((inv) =>
+      selectedInvoices.has(inv.id)
+    );
+    const target = selected.length > 0 ? selected : drawerState.selectedInvoice;
+
+    if (!target || (Array.isArray(target) && target.length === 0)) {
       toast.error("No invoice selected");
       return;
     }
+
     try {
-      downloadInvoiceJSON(drawerState.selectedInvoice, fee);
-      toast.success("JSON downloaded successfully!");
+      downloadInvoiceJSON(target, fee);
+      toast.success(
+        Array.isArray(target) && target.length > 1
+          ? "Selected invoices exported to JSON!"
+          : "JSON downloaded successfully!"
+      );
     } catch (error) {
       console.error("Error generating JSON:", error);
       toast.error("Failed to generate JSON. Please try again.");

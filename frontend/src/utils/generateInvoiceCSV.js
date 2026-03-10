@@ -6,7 +6,7 @@ import {
   formatInvoiceId,
   resolveStatus,
   buildParty,
-  toDisplayDate,
+  toISODate,
 } from "./invoiceExportHelpers";
 
 /**
@@ -25,8 +25,8 @@ const generateCSVContent = (invoice, fee = 0) => {
   const status = resolveStatus(invoice);
   const from = buildParty(invoice.user, "N/A");
   const to = buildParty(invoice.client, "N/A");
-  const issueDate = toDisplayDate(invoice.issueDate);
-  const dueDate = toDisplayDate(invoice.dueDate);
+  const issueDate = toISODate(invoice.issueDate) || "";
+  const dueDate = toISODate(invoice.dueDate) || "";
   const networkFee = formatNetworkFee(fee);
 
   const escapeCSV = (value) => {
@@ -155,18 +155,43 @@ const generateCSVContent = (invoice, fee = 0) => {
 };
 
 /**
- * Generate and download CSV file for an invoice
- * @param {Object} invoice - Invoice object
+ * Generate and download CSV file for one or more invoices
+ * @param {Object|Object[]} invoiceOrInvoices - Single invoice object or array of invoices
  * @param {string|BigInt} fee - Network fee (wei)
  */
-export const downloadInvoiceCSV = (invoice, fee = 0) => {
-  const csvContent = generateCSVContent(invoice, fee);
+export const downloadInvoiceCSV = (invoiceOrInvoices, fee = 0) => {
+  const invoices = Array.isArray(invoiceOrInvoices)
+    ? invoiceOrInvoices
+    : [invoiceOrInvoices];
+
+  if (invoices.length === 0) return;
+
+  let combinedCSV = "";
+  invoices.forEach((invoice, index) => {
+    const csvContent = generateCSVContent(invoice, fee);
+    if (index === 0) {
+      combinedCSV = csvContent;
+    } else {
+      // Skip the header row for subsequent invoices
+      const lines = csvContent.split("\n");
+      combinedCSV += "\n" + lines.slice(1).join("\n");
+    }
+  });
+
   const BOM = "\uFEFF";
-  const blob = new Blob([BOM + csvContent], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob([BOM + combinedCSV], {
+    type: "text/csv;charset=utf-8;",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `invoice-${invoice.id.toString().padStart(6, "0")}.csv`;
+
+  if (invoices.length === 1) {
+    link.download = `invoice-${invoices[0].id.toString().padStart(6, "0")}.csv`;
+  } else {
+    link.download = `invoices-export-${new Date().getTime()}.csv`;
+  }
+
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

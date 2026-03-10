@@ -103,7 +103,9 @@ export const toISODate = (value) => {
 export const formatInvoiceTotal = (invoice, fee, fallbackChainId) => {
   const tokenSymbol = invoice.paymentToken?.symbol || "ETH";
   const tokenAddress = invoice.paymentToken?.address;
-  const chainInfo = getWagmiChainInfo(invoice.paymentToken?.chainId || fallbackChainId);
+  const chainInfo = getWagmiChainInfo(
+    invoice.paymentToken?.chainId ?? invoice.chainId ?? fallbackChainId
+  );
   const nativeSymbol = chainInfo?.nativeCurrency?.symbol || "ETH";
   const formattedFee = formatNetworkFee(fee);
   const isNative = !tokenAddress || tokenAddress === ethers.ZeroAddress;

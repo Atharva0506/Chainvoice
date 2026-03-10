@@ -47,18 +47,38 @@ const generateJSONContent = (invoice, fee = 0) => {
 };
 
 /**
- * Generate and download JSON file for an invoice
- * @param {Object} invoice - Invoice object
+ * Generate and download JSON file for one or more invoices
+ * @param {Object|Object[]} invoiceOrInvoices - Single invoice object or array of invoices
  * @param {string|BigInt} fee - Network fee (wei)
  */
-export const downloadInvoiceJSON = (invoice, fee = 0) => {
-  const jsonContent = generateJSONContent(invoice, fee);
+export const downloadInvoiceJSON = (invoiceOrInvoices, fee = 0) => {
+  const invoices = Array.isArray(invoiceOrInvoices)
+    ? invoiceOrInvoices
+    : [invoiceOrInvoices];
+
+  if (invoices.length === 0) return;
+
+  let jsonContent;
+  if (invoices.length === 1) {
+    jsonContent = generateJSONContent(invoices[0], fee);
+  } else {
+    jsonContent = invoices.map((inv) => generateJSONContent(inv, fee));
+  }
+
   const jsonString = JSON.stringify(jsonContent, null, 2);
-  const blob = new Blob([jsonString], { type: "application/json;charset=utf-8;" });
+  const blob = new Blob([jsonString], {
+    type: "application/json;charset=utf-8;",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `invoice-${invoice.id.toString().padStart(6, "0")}.json`;
+
+  if (invoices.length === 1) {
+    link.download = `invoice-${invoices[0].id.toString().padStart(6, "0")}.json`;
+  } else {
+    link.download = `invoices-export-${new Date().getTime()}.json`;
+  }
+
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
