@@ -87,8 +87,6 @@ function ReceivedInvoice() {
 
   const [anchorEl, setAnchorEl] = useState(null);
   const openExportMenu = Boolean(anchorEl);
-  const [batchExportAnchorEl, setBatchExportAnchorEl] = useState(null);
-  const openBatchExportMenu = Boolean(batchExportAnchorEl);
   const [loading, setLoading] = useState(true);
   const [receivedInvoices, setReceivedInvoice] = useState([]);
   const [fee, setFee] = useState(0);
@@ -881,14 +879,6 @@ function ReceivedInvoice() {
     setAnchorEl(null);
   };
 
-  const handleBatchExportClick = (event) => {
-    setBatchExportAnchorEl(event.currentTarget);
-  };
-
-  const handleBatchExportClose = () => {
-    setBatchExportAnchorEl(null);
-  };
-
   const handlePrint = async () => {
     if (!drawerState.selectedInvoice) {
       toast.error("No invoice selected");
@@ -908,24 +898,13 @@ function ReceivedInvoice() {
   };
 
   const handleExportCSV = () => {
-    // Determine the set of invoices to export
-    const selected = receivedInvoices.filter((inv) =>
-      selectedInvoices.has(inv.id)
-    );
-    const target = selected.length > 0 ? selected : drawerState.selectedInvoice;
-
-    if (!target || (Array.isArray(target) && target.length === 0)) {
+    if (!drawerState.selectedInvoice) {
       toast.error("No invoice selected");
       return;
     }
-
     try {
-      downloadInvoiceCSV(target, fee);
-      toast.success(
-        Array.isArray(target) && target.length > 1
-          ? "Selected invoices exported to CSV!"
-          : "CSV downloaded successfully!"
-      );
+      downloadInvoiceCSV(drawerState.selectedInvoice, fee);
+      toast.success("CSV downloaded successfully!");
     } catch (error) {
       console.error("Error generating CSV:", error);
       toast.error("Failed to generate CSV. Please try again.");
@@ -934,24 +913,13 @@ function ReceivedInvoice() {
   };
 
   const handleExportJSON = () => {
-    // Determine the set of invoices to export
-    const selected = receivedInvoices.filter((inv) =>
-      selectedInvoices.has(inv.id)
-    );
-    const target = selected.length > 0 ? selected : drawerState.selectedInvoice;
-
-    if (!target || (Array.isArray(target) && target.length === 0)) {
+    if (!drawerState.selectedInvoice) {
       toast.error("No invoice selected");
       return;
     }
-
     try {
-      downloadInvoiceJSON(target, fee);
-      toast.success(
-        Array.isArray(target) && target.length > 1
-          ? "Selected invoices exported to JSON!"
-          : "JSON downloaded successfully!"
-      );
+      downloadInvoiceJSON(drawerState.selectedInvoice, fee);
+      toast.success("JSON downloaded successfully!");
     } catch (error) {
       console.error("Error generating JSON:", error);
       toast.error("Failed to generate JSON. Please try again.");
@@ -1157,47 +1125,6 @@ function ReceivedInvoice() {
                   >
                     Clear
                   </Button>
-                  <Button
-                    startIcon={<DownloadIcon />}
-                    onClick={handleBatchExportClick}
-                    variant="outlined"
-                    size="small"
-                    disabled={selectedCount === 0}
-                    aria-haspopup="true"
-                    aria-expanded={openBatchExportMenu}
-                    sx={{ minWidth: { xs: 0, sm: 140 }, flex: { xs: 1, sm: "unset" }, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                  >
-                    Export Selected
-                  </Button>
-                  <Menu
-                    anchorEl={batchExportAnchorEl}
-                    open={openBatchExportMenu}
-                    onClose={handleBatchExportClose}
-                    anchorOrigin={{
-                      vertical: "bottom",
-                      horizontal: "right",
-                    }}
-                    transformOrigin={{
-                      vertical: "top",
-                      horizontal: "right",
-                    }}
-                    PaperProps={{
-                      sx: { mt: 1, width: 200 }
-                    }}
-                  >
-                    <MenuItem onClick={() => { handleExportCSV(); handleBatchExportClose(); }}>
-                      <ListItemIcon>
-                        <TableChartIcon fontSize="small" sx={{ color: "#16a34a" }} />
-                      </ListItemIcon>
-                      <ListItemText>Export as CSV</ListItemText>
-                    </MenuItem>
-                    <MenuItem onClick={() => { handleExportJSON(); handleBatchExportClose(); }}>
-                      <ListItemIcon>
-                        <DataObjectIcon fontSize="small" sx={{ color: "#3b82f6" }} />
-                      </ListItemIcon>
-                      <ListItemText>Export as JSON</ListItemText>
-                    </MenuItem>
-                  </Menu>
                 </Box>
               </Box>
 
