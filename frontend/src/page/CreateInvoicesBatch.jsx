@@ -7,7 +7,6 @@ import {
   Contract,
   ethers,
   formatUnits,
-  parseUnits,
 } from "ethers";
 import { useAccount, useWalletClient } from "wagmi";
 import { ChainvoiceABI } from "../contractsABI/ChainvoiceABI";
@@ -54,6 +53,11 @@ import WalletConnectionAlert from "../components/WalletConnectionAlert";
 import TokenPicker, { ToggleSwitch } from "@/components/TokenPicker";
 import { CopyButton } from "@/components/ui/copyButton";
 import CountryPicker from "@/components/CountryPicker";
+import {
+  getLineAmountDetails,
+  getSafeLineAmountDisplay,
+  INVOICE_DECIMALS,
+} from "@/utils/invoiceCalculations";
 
 function CreateInvoicesBatch() {
   const { data: walletClient } = useWalletClient();
@@ -115,18 +119,16 @@ function CreateInvoicesBatch() {
     setInvoiceRows((prev) =>
       prev.map((row) => {
         const total = row.itemData.reduce((sum, item) => {
-          const qty = parseUnits(item.qty || "0", 18);
-          const unitPrice = parseUnits(item.unitPrice || "0", 18);
-          const discount = parseUnits(item.discount || "0", 18);
-          const tax = parseUnits(item.tax || "0", 18);
-          const lineTotal = (qty * unitPrice) / parseUnits("1", 18);
-          const adjusted = lineTotal - discount + tax;
+          const { valid, amountWei } = getLineAmountDetails(item);
+          if (!valid) return sum;
+          let adjusted = amountWei;
+          if (adjusted < 0n) adjusted = 0n;
           return sum + adjusted;
         }, 0n);
 
         return {
           ...row,
-          totalAmountDue: formatUnits(total, 18),
+          totalAmountDue: formatUnits(total, INVOICE_DECIMALS),
         };
       })
     );
@@ -213,15 +215,12 @@ function CreateInvoicesBatch() {
                 name === "discount" ||
                 name === "tax"
               ) {
-                const qty = parseUnits(updatedItem.qty || "0", 18);
-                const unitPrice = parseUnits(updatedItem.unitPrice || "0", 18);
-                const discount = parseUnits(updatedItem.discount || "0", 18);
-                const tax = parseUnits(updatedItem.tax || "0", 18);
-
-                const lineTotal = (qty * unitPrice) / parseUnits("1", 18);
-                const finalAmount = lineTotal - discount + tax;
-
-                updatedItem.amount = formatUnits(finalAmount, 18);
+                const { valid, amountWei } = getLineAmountDetails(updatedItem);
+                if (!valid) {
+                  updatedItem.amount = "";
+                } else {
+                  updatedItem.amount = getSafeLineAmountDisplay(updatedItem);
+                }
               }
               return updatedItem;
             }
@@ -1184,12 +1183,7 @@ function CreateInvoicesBatch() {
                                   Amount
                                 </label>
                                 <div className="bg-gray-100 px-3 py-2 rounded border text-gray-700 font-mono text-sm">
-                                  {(
-                                    (parseFloat(item.qty) || 0) *
-                                      (parseFloat(item.unitPrice) || 0) -
-                                    (parseFloat(item.discount) || 0) +
-                                    (parseFloat(item.tax) || 0)
-                                  ).toFixed(4)}
+                                  {(parseFloat(item.amount) || 0).toFixed(4)}
                                 </div>
                               </div>
                               <div className="md:col-span-1 flex justify-center md:justify-center">
