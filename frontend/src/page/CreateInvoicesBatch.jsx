@@ -54,6 +54,13 @@ import WalletConnectionAlert from "../components/WalletConnectionAlert";
 import TokenPicker, { ToggleSwitch } from "@/components/TokenPicker";
 import { CopyButton } from "@/components/ui/copyButton";
 import CountryPicker from "@/components/CountryPicker";
+import ProductCatalogImport from "@/components/ProductCatalogImport";
+import ProductAutocompleteInput from "@/components/ProductAutocompleteInput";
+import { useProductCatalog } from "@/hooks/useProductCatalog";
+import {
+  applyProductToInvoiceItem,
+  createEmptyInvoiceItem,
+} from "@/utils/productCatalogInvoiceHelpers";
 
 function CreateInvoicesBatch() {
   const { data: walletClient } = useWalletClient();
@@ -86,16 +93,7 @@ function CreateInvoicesBatch() {
       clientCountry: "",
       clientCity: "",
       clientPostalcode: "",
-      itemData: [
-        {
-          description: "",
-          qty: "",
-          unitPrice: "",
-          discount: "",
-          tax: "",
-          amount: "",
-        },
-      ],
+      itemData: [createEmptyInvoiceItem()],
       totalAmountDue: 0,
     },
   ]);
@@ -109,6 +107,8 @@ function CreateInvoicesBatch() {
     userCity: "",
     userPostalcode: "",
   });
+
+  const { catalogMetadata } = useProductCatalog();
 
   // Calculate totals for each invoice
   useEffect(() => {
@@ -164,16 +164,7 @@ function CreateInvoicesBatch() {
         clientCountry: "",
         clientCity: "",
         clientPostalcode: "",
-        itemData: [
-          {
-            description: "",
-            qty: "",
-            unitPrice: "",
-            discount: "",
-            tax: "",
-            amount: "",
-          },
-        ],
+        itemData: [createEmptyInvoiceItem()],
         totalAmountDue: 0,
       },
     ]);
@@ -243,18 +234,30 @@ function CreateInvoicesBatch() {
             ...row,
             itemData: [
               ...row.itemData,
-              {
-                description: "",
-                qty: "",
-                unitPrice: "",
-                discount: "",
-                tax: "",
-                amount: "",
-              },
+              createEmptyInvoiceItem(),
             ],
           };
         }
         return row;
+      })
+    );
+  };
+
+  const handleProductSelect = (product, rowIndex, itemIndex) => {
+    setInvoiceRows((prevRows) =>
+      prevRows.map((row, rIndex) => {
+        if (rIndex !== rowIndex) return row;
+
+        const updatedItemData = row.itemData.map((item, iIndex) => {
+          if (iIndex !== itemIndex) return item;
+          return applyProductToInvoiceItem(item, product);
+        });
+
+        if (itemIndex === row.itemData.length - 1) {
+          updatedItemData.push(createEmptyInvoiceItem());
+        }
+
+        return { ...row, itemData: updatedItemData };
       })
     );
   };
@@ -891,6 +894,8 @@ function CreateInvoicesBatch() {
             </div>
           </div>
 
+          <ProductCatalogImport />
+
           {/* Clean Invoice Rows */}
           <div className="w-full mb-6 sm:mb-8 space-y-4">
             <div className="flex items-center justify-between">
@@ -1104,7 +1109,7 @@ function CreateInvoicesBatch() {
                               <label className="text-xs font-medium text-gray-600 mb-1 block md:hidden">
                                 Description
                               </label>
-                              <Input
+                              <ProductAutocompleteInput
                                 placeholder="Enter Description"
                                 className="w-full border-gray-300 text-black"
                                 name="description"
@@ -1112,6 +1117,10 @@ function CreateInvoicesBatch() {
                                 onChange={(e) =>
                                   handleItemData(e, rowIndex, itemIndex)
                                 }
+                                onSelectProduct={(product) =>
+                                  handleProductSelect(product, rowIndex, itemIndex)
+                                }
+                                catalogMetadata={catalogMetadata}
                               />
                             </div>
                             <div className="grid grid-cols-2 gap-2 md:contents">
