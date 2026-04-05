@@ -16,6 +16,8 @@ import { useRef } from "react";
 import { generateInvoicePDF } from "@/utils/generateInvoicePDF";
 import { formatInvoiceTotal } from "@/utils/invoiceExportHelpers";
 import { useInvoiceExport } from "@/hooks/useInvoiceExport";
+import { downloadInvoiceCSV } from "@/utils/generateInvoiceCSV";
+import { downloadInvoiceJSON } from "@/utils/generateInvoiceJSON";
 import { LitNodeClient } from "@lit-protocol/lit-node-client";
 import { decryptToString } from "@lit-protocol/encryption/src/lib/encryption.js";
 import { LIT_ABILITY, LIT_NETWORK } from "@lit-protocol/constants";
@@ -887,6 +889,45 @@ function ReceivedInvoice() {
     setBatchExportAnchorEl(null);
   };
 
+  const getSelectedInvoiceObjects = () =>
+    receivedInvoices.filter((inv) => selectedInvoices.has(inv.id));
+
+  const handleBatchExportCSV = () => {
+    const invoicesToExport = getSelectedInvoiceObjects();
+    if (invoicesToExport.length === 0) {
+      toast.error("No invoices selected");
+      return;
+    }
+    try {
+      downloadInvoiceCSV(invoicesToExport, fee);
+      toast.success(
+        `CSV downloaded successfully (${invoicesToExport.length} invoice${invoicesToExport.length > 1 ? "s" : ""})!`
+      );
+    } catch (error) {
+      console.error("Error generating CSV:", error);
+      toast.error("Failed to generate CSV. Please try again.");
+    }
+    handleBatchExportClose();
+  };
+
+  const handleBatchExportJSON = () => {
+    const invoicesToExport = getSelectedInvoiceObjects();
+    if (invoicesToExport.length === 0) {
+      toast.error("No invoices selected");
+      return;
+    }
+    try {
+      downloadInvoiceJSON(invoicesToExport, fee);
+      toast.success(
+        `JSON downloaded successfully (${invoicesToExport.length} invoice${invoicesToExport.length > 1 ? "s" : ""})!`
+      );
+    } catch (error) {
+      console.error("Error generating JSON:", error);
+      toast.error("Failed to generate JSON. Please try again.");
+    }
+    handleBatchExportClose();
+  };
+
   const handlePrint = async () => {
     if (!drawerState.selectedInvoice) {
       toast.error("No invoice selected");
@@ -1137,13 +1178,13 @@ function ReceivedInvoice() {
                       sx: { mt: 1, width: 200 }
                     }}
                   >
-                    <MenuItem onClick={() => { handleExportCSV(); handleBatchExportClose(); }}>
+                    <MenuItem onClick={() => { handleBatchExportCSV(); }}>
                       <ListItemIcon>
                         <TableChartIcon fontSize="small" sx={{ color: "#16a34a" }} />
                       </ListItemIcon>
                       <ListItemText>Export as CSV</ListItemText>
                     </MenuItem>
-                    <MenuItem onClick={() => { handleExportJSON(); handleBatchExportClose(); }}>
+                    <MenuItem onClick={() => { handleBatchExportJSON(); }}>
                       <ListItemIcon>
                         <DataObjectIcon fontSize="small" sx={{ color: "#3b82f6" }} />
                       </ListItemIcon>
