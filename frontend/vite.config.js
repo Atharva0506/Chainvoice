@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [react(), nodePolyfills()],
   base:'/',
   server: {
-    allowedHosts: true
+    allowedHosts: ['.trycloudflare.com']
   },
   resolve: {
     alias: {
