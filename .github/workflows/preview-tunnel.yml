@@ -17,11 +17,6 @@
 name: "🔗 PR Preview (Cloudflare Tunnel)"
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - "frontend/**"
-
   workflow_dispatch:
     inputs:
       pr_number:
@@ -79,18 +74,21 @@ jobs:
         working-directory: ${{ env.FRONTEND_DIR }}
         run: npm i
 
-      # ── Start dev server ────────────────────────────────────────────────
-      - name: Start dev server
+      # ── Start Services & Post Comment ───────────────────────────────────
+      - name: Start Services and Keep Alive
         working-directory: ${{ env.FRONTEND_DIR }}
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_WALLETCONNECT_PROJECT_ID: ${{ secrets.VITE_WALLETCONNECT_PROJECT_ID }}
           VITE_CONTRACT_ADDRESS_11155111: "0x54a542dCDC306eE281b5De4613EcEfe6e6ABc562"
           VITE_CONTRACT_ADDRESS_61: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
           VITE_CONTRACT_ADDRESS_137: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
           VITE_LIT_BYPASS: "true"
         run: |
-          nohup npm run dev -- --host 0.0.0.0 &
-          echo "Waiting for dev server..."
+          # 1. Start Vite
+          echo "Starting Vite dev server..."
+          npm run dev -- --host 0.0.0.0 > server.log 2>&1 &
+          
           for i in $(seq 1 30); do
             if curl -s http://localhost:5173 > /dev/null 2>&1; then
               echo "✅ Dev server ready on port 5173"
@@ -99,22 +97,16 @@ jobs:
             sleep 2
           done
 
-      # ── Start Cloudflare Tunnel ─────────────────────────────────────────
-      - name: Start Cloudflare Quick Tunnel
-        run: |
-          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-            -o cloudflared
+          # 2. Start Cloudflare Tunnel
+          echo "Starting Cloudflare Tunnel..."
+          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
-
-          ./cloudflared tunnel --url http://localhost:5173 2>&1 | tee tunnel.log &
-          TUNNEL_PID=$!
-          echo "TUNNEL_PID=$TUNNEL_PID" >> $GITHUB_ENV
-
+          ./cloudflared tunnel --url http://localhost:5173 > tunnel.log 2>&1 &
+          
           echo "Waiting for tunnel URL..."
           for i in $(seq 1 30); do
             TUNNEL_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
             if [ -n "$TUNNEL_URL" ]; then
-              echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
               echo "✅ Tunnel: $TUNNEL_URL"
               break
             fi
@@ -127,41 +119,26 @@ jobs:
             exit 1
           fi
 
-      # ── Post PR comment ─────────────────────────────────────────────────
-      - name: Find existing tunnel comment
-        uses: peter-evans/find-comment@v3
-        id: find_comment
-        with:
-          issue-number: ${{ env.PR_NUMBER }}
-          comment-author: "github-actions[bot]"
-          body-includes: "Live Preview Available"
+          # 3. Post PR Comment
+          echo "Posting PR comment..."
+          COMMENT_BODY="## 🔗 Live Preview Available
 
-      - name: Post or update PR comment
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ env.PR_NUMBER }}
-          comment-id: ${{ steps.find_comment.outputs.comment-id }}
-          edit-mode: replace
-          body: |
-            ## 🔗 Live Preview Available
+          **Preview URL:** $TUNNEL_URL
 
-            **Preview URL:** ${{ env.TUNNEL_URL }}
+          > ⚠️ This preview is **live only while the workflow is running**.
+          > Cancel the workflow run to stop the tunnel.
 
-            > ⚠️ This preview is **live only while the workflow is running**.
-            > Cancel the workflow run to stop the tunnel.
+          | Detail | Value |
+          |--------|-------|
+          | Commit | \`${{ env.PR_SHA }}\` |
+          | Workflow | [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
 
-            | Detail | Value |
-            |--------|-------|
-            | Commit | `${{ env.PR_SHA }}` |
-            | Triggered by | @${{ github.actor }} |
-            | Workflow | [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+          ---
+          *🤖 Powered by Cloudflare Quick Tunnel (free, no account)*"
 
-            ---
-            *🤖 Powered by Cloudflare Quick Tunnel (free, no account)*
+          gh pr comment ${{ env.PR_NUMBER }} --body "$COMMENT_BODY"
 
-      # ── Keep alive ──────────────────────────────────────────────────────
-      - name: Keep tunnel alive
-        run: |
-          echo "🟢 Preview live at: ${{ env.TUNNEL_URL }}"
+          # 4. Keep Alive
+          echo "🟢 Preview live at: $TUNNEL_URL"
           echo "   Cancel this workflow to stop the tunnel."
-          wait ${{ env.TUNNEL_PID }} || true
+          sleep 3600
