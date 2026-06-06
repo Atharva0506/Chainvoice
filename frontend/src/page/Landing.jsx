@@ -6,8 +6,23 @@ import TokenCarousel from "@/components/TokenCrousel";
 
 function Landing() {
   const year = new Date().getFullYear();
+  const isPreview =
+    typeof window !== "undefined" &&
+    (window.location.hostname.includes("trycloudflare.com") ||
+      window.location.pathname.includes("pr-preview"));
+
   return (
     <div className="bg-[#0F1015] text-white min-h-screen">
+      {/* Preview Environment Banner */}
+      {isPreview && (
+        <motion.div
+          initial={{ y: -40, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="bg-gradient-to-r from-yellow-500 via-orange-500 to-yellow-500 text-black text-center py-2 px-4 text-sm font-bold tracking-wide"
+        >
+          ⚠️ PR PREVIEW ENVIRONMENT — Not connected to production blockchain
+        </motion.div>
+      )}
       {/* Hero Section */}
       <section className="relative overflow-hidden pt-24 pb-32">
         <div className="absolute inset-0 z-0 opacity-20">
