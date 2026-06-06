@@ -1,0 +1,184 @@
+# =============================================================================
+# PR Preview — GitHub Pages (Auto-trigger on frontend changes)
+#
+# Automatically builds and deploys a preview when a PR touches frontend/ files.
+# Preview URL is persistent — stays live until the PR is closed/merged.
+# Completely free. No accounts. No manual trigger needed.
+#
+# Preview URL:
+#   https://<owner>.github.io/Chainvoice/pr-preview/pr-<number>/
+#
+# SECURITY NOTES:
+# - `pull_request` trigger does NOT expose secrets to fork PRs (GitHub default)
+# - For fork PRs from first-time contributors, GitHub requires maintainer
+#   approval before the workflow runs (Settings → Actions → General)
+# - The build is static (vite build) — no server, no runtime secrets needed
+# - Contract addresses are public (already in README), not sensitive
+# - WalletConnect Project ID: without it, wallet just won't connect in preview
+#   (UI still renders fine for visual review)
+# =============================================================================
+
+name: "🌐 PR Preview (GitHub Pages)"
+
+on:
+  # Auto-trigger when PR changes frontend files
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - "frontend/**"
+
+  # Also allow manual trigger for PRs that don't touch frontend/
+  # (e.g. contract changes that affect the UI indirectly)
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to preview"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  NODE_VERSION: "20"
+  FRONTEND_DIR: "./frontend"
+
+jobs:
+  deploy-preview:
+    name: "Deploy PR Preview"
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Determine PR number ────────────────────────────────────────────
+      # Works for both auto-trigger (pull_request) and manual (workflow_dispatch)
+      - name: Set PR number
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "PR_NUMBER=${{ inputs.pr_number }}" >> $GITHUB_ENV
+          else
+            echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+          fi
+
+      # ── Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # For pull_request: checkout the PR merge commit
+          # For workflow_dispatch: checkout default branch, then switch
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+
+      - name: Checkout PR branch (manual trigger only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr checkout ${{ env.PR_NUMBER }}
+
+      - name: Capture PR metadata
+        run: |
+          echo "PR_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "PR_BRANCH=$(git branch --show-current || echo 'detached')" >> $GITHUB_ENV
+
+      # ── Build ───────────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: ${{ env.FRONTEND_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci
+
+      - name: Build for preview
+        working-directory: ${{ env.FRONTEND_DIR }}
+        env:
+          # Public contract addresses (already in README — not secrets)
+          VITE_CONTRACT_ADDRESS_11155111: "0x54a542dCDC306eE281b5De4613EcEfe6e6ABc562"
+          VITE_CONTRACT_ADDRESS_61: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
+          VITE_CONTRACT_ADDRESS_137: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
+          VITE_LIT_BYPASS: "true"
+          # WalletConnect ID: only available for same-repo PRs, not forks
+          # If missing, wallet button won't work but UI still renders for review
+          VITE_WALLETCONNECT_PROJECT_ID: ${{ secrets.VITE_WALLETCONNECT_PROJECT_ID }}
+        run: npx vite build --base "/Chainvoice/pr-preview/pr-${{ env.PR_NUMBER }}/"
+
+      # ── Deploy to gh-pages subdirectory ─────────────────────────────────
+      - name: Deploy preview
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Save build output
+          cp -r ${{ env.FRONTEND_DIR }}/dist /tmp/pr-preview-dist
+
+          # Switch to gh-pages branch (create if doesn't exist)
+          git fetch origin gh-pages 2>/dev/null || true
+          git checkout gh-pages 2>/dev/null || git checkout --orphan gh-pages
+
+          # Deploy to unique subdirectory for this PR
+          mkdir -p pr-preview/pr-${{ env.PR_NUMBER }}
+          rm -rf pr-preview/pr-${{ env.PR_NUMBER }}/*
+          cp -r /tmp/pr-preview-dist/* pr-preview/pr-${{ env.PR_NUMBER }}/
+
+          git add pr-preview/pr-${{ env.PR_NUMBER }}
+          git commit -m "Deploy preview for PR #${{ env.PR_NUMBER }} (${{ env.PR_SHA }})" || echo "No changes"
+          git push origin gh-pages
+
+      # ── Post/update PR comment ──────────────────────────────────────────
+      - name: Find existing preview comment
+        uses: peter-evans/find-comment@v3
+        id: find_comment
+        with:
+          issue-number: ${{ env.PR_NUMBER }}
+          comment-author: "github-actions[bot]"
+          body-includes: "PR Preview Deployed"
+
+      - name: Post or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ env.PR_NUMBER }}
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
+          edit-mode: replace
+          body: |
+            ## 🌐 PR Preview Deployed
+
+            **🔗 Preview URL:** https://${{ github.repository_owner }}.github.io/Chainvoice/pr-preview/pr-${{ env.PR_NUMBER }}/
+
+            > ✅ This preview is **always live** — check it anytime until the PR is closed.
+            > 🔄 Preview auto-updates on every new push to this PR.
+
+            | Detail | Value |
+            |--------|-------|
+            | Commit | `${{ env.PR_SHA }}` |
+            | Updated | ${{ github.event.head_commit.timestamp || 'just now' }} |
+
+            ---
+            *🤖 Auto-generated by [PR Preview](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*
+
+  # ── Cleanup when PR is closed ─────────────────────────────────────────
+  cleanup-preview:
+    name: "Clean up preview"
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+
+      - name: Remove preview directory
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          if [ -d "pr-preview/pr-${PR_NUM}" ]; then
+            rm -rf "pr-preview/pr-${PR_NUM}"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Clean up preview for PR #${PR_NUM}"
+            git push origin gh-pages
+            echo "✅ Cleaned up preview for PR #${PR_NUM}"
+          fi
