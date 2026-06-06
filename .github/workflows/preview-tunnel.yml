@@ -1,0 +1,170 @@
+# =============================================================================
+# PR Preview — Cloudflare Quick Tunnel
+#
+# Exposes a live Vite dev server via Cloudflare's free Quick Tunnel service.
+# No Cloudflare account required. Completely free.
+#
+# Trigger options:
+# - Auto: when PR touches frontend/ files (live dev server preview)
+# - Manual: workflow_dispatch for any PR
+#
+# SECURITY NOTES:
+# - pull_request trigger does NOT expose secrets to fork PRs
+# - Tunnel is ephemeral — dies when workflow stops
+# - No persistent infrastructure to manage
+# =============================================================================
+
+name: "🔗 PR Preview (Cloudflare Tunnel)"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "frontend/**"
+
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to preview"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  NODE_VERSION: "20"
+  FRONTEND_DIR: "./frontend"
+
+jobs:
+  preview:
+    name: "Live Preview"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── Determine PR number ────────────────────────────────────────────
+      - name: Set PR number
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "PR_NUMBER=${{ inputs.pr_number }}" >> $GITHUB_ENV
+          else
+            echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+          fi
+
+      # ── Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
+
+      - name: Checkout PR branch (manual trigger only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr checkout ${{ env.PR_NUMBER }}
+
+      - name: Capture PR metadata
+        run: |
+          echo "PR_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "PR_BRANCH=$(git branch --show-current || echo 'detached')" >> $GITHUB_ENV
+
+      # ── Setup & Build ───────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: ${{ env.FRONTEND_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci
+
+      # ── Start dev server ────────────────────────────────────────────────
+      - name: Start dev server
+        working-directory: ${{ env.FRONTEND_DIR }}
+        env:
+          VITE_WALLETCONNECT_PROJECT_ID: ${{ secrets.VITE_WALLETCONNECT_PROJECT_ID }}
+          VITE_CONTRACT_ADDRESS_11155111: "0x54a542dCDC306eE281b5De4613EcEfe6e6ABc562"
+          VITE_CONTRACT_ADDRESS_61: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
+          VITE_CONTRACT_ADDRESS_137: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
+          VITE_LIT_BYPASS: "true"
+        run: |
+          nohup npm run dev -- --host 0.0.0.0 &
+          echo "Waiting for dev server..."
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:5173 > /dev/null 2>&1; then
+              echo "✅ Dev server ready on port 5173"
+              break
+            fi
+            sleep 2
+          done
+
+      # ── Start Cloudflare Tunnel ─────────────────────────────────────────
+      - name: Start Cloudflare Quick Tunnel
+        run: |
+          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o cloudflared
+          chmod +x cloudflared
+
+          ./cloudflared tunnel --url http://localhost:5173 2>&1 | tee tunnel.log &
+          TUNNEL_PID=$!
+          echo "TUNNEL_PID=$TUNNEL_PID" >> $GITHUB_ENV
+
+          echo "Waiting for tunnel URL..."
+          for i in $(seq 1 30); do
+            TUNNEL_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+            if [ -n "$TUNNEL_URL" ]; then
+              echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
+              echo "✅ Tunnel: $TUNNEL_URL"
+              break
+            fi
+            sleep 2
+          done
+
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "❌ Failed to get tunnel URL"
+            cat tunnel.log
+            exit 1
+          fi
+
+      # ── Post PR comment ─────────────────────────────────────────────────
+      - name: Find existing tunnel comment
+        uses: peter-evans/find-comment@v3
+        id: find_comment
+        with:
+          issue-number: ${{ env.PR_NUMBER }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Live Preview Available"
+
+      - name: Post or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ env.PR_NUMBER }}
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
+          edit-mode: replace
+          body: |
+            ## 🔗 Live Preview Available
+
+            **Preview URL:** ${{ env.TUNNEL_URL }}
+
+            > ⚠️ This preview is **live only while the workflow is running**.
+            > Cancel the workflow run to stop the tunnel.
+
+            | Detail | Value |
+            |--------|-------|
+            | Commit | `${{ env.PR_SHA }}` |
+            | Triggered by | @${{ github.actor }} |
+            | Workflow | [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+
+            ---
+            *🤖 Powered by Cloudflare Quick Tunnel (free, no account)*
+
+      # ── Keep alive ──────────────────────────────────────────────────────
+      - name: Keep tunnel alive
+        run: |
+          echo "🟢 Preview live at: ${{ env.TUNNEL_URL }}"
+          echo "   Cancel this workflow to stop the tunnel."
+          wait ${{ env.TUNNEL_PID }} || true
