@@ -6,6 +6,9 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 export default defineConfig({
   plugins: [react(), nodePolyfills()],
   base:'/',
+  server: {
+    allowedHosts: true
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
