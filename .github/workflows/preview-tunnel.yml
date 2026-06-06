@@ -56,8 +56,6 @@ jobs:
       # ── Checkout ────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
 
       - name: Checkout PR branch (manual trigger only)
         if: github.event_name == 'workflow_dispatch'
@@ -69,18 +67,17 @@ jobs:
         run: |
           echo "PR_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           echo "PR_BRANCH=$(git branch --show-current || echo 'detached')" >> $GITHUB_ENV
+          ls -la frontend/
 
       # ── Setup & Build ───────────────────────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-          cache-dependency-path: ${{ env.FRONTEND_DIR }}/package-lock.json
 
       - name: Install dependencies
         working-directory: ${{ env.FRONTEND_DIR }}
-        run: npm ci
+        run: npm i
 
       # ── Start dev server ────────────────────────────────────────────────
       - name: Start dev server

@@ -97,12 +97,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-          cache-dependency-path: ${{ env.FRONTEND_DIR }}/package-lock.json
 
       - name: Install frontend dependencies
         working-directory: ${{ env.FRONTEND_DIR }}
-        run: npm ci
+        run: npm i
 
       - name: Start frontend
         working-directory: ${{ env.FRONTEND_DIR }}
