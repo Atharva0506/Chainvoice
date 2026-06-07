@@ -92,19 +92,11 @@ jobs:
           echo "CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3" >> $GITHUB_ENV
           echo "✅ Contract deployed"
 
-      # ── Frontend ────────────────────────────────────────────────────────
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install frontend dependencies
-        working-directory: ${{ env.FRONTEND_DIR }}
-        run: npm i
-
-      - name: Start frontend
+      # ── Start Services & Post Comment ───────────────────────────────────
+      - name: Start Services and Keep Alive
         working-directory: ${{ env.FRONTEND_DIR }}
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_CONTRACT_ADDRESS_31337: ${{ env.CONTRACT_ADDRESS }}
           VITE_WALLETCONNECT_PROJECT_ID: ${{ secrets.VITE_WALLETCONNECT_PROJECT_ID }}
           VITE_CONTRACT_ADDRESS_11155111: "0x54a542dCDC306eE281b5De4613EcEfe6e6ABc562"
@@ -112,88 +104,77 @@ jobs:
           VITE_CONTRACT_ADDRESS_137: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
           VITE_LIT_BYPASS: "true"
         run: |
-          nohup npm run dev -- --host 0.0.0.0 &
+          echo "Starting Vite dev server..."
+          npm run dev -- --host 0.0.0.0 > server.log 2>&1 &
           for i in $(seq 1 30); do
             if curl -s http://localhost:5173 > /dev/null 2>&1; then
-              echo "✅ Frontend ready on port 5173"
+              echo "✅ Frontend ready"
               break
             fi
             sleep 2
           done
-
-      # ── Tunnels ─────────────────────────────────────────────────────────
-      - name: Install cloudflared
-        run: |
-          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-            -o cloudflared
+          
+          echo "Starting Cloudflare Tunnels..."
+          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
-
-      - name: Start frontend tunnel
-        run: |
-          ./cloudflared tunnel --url http://localhost:5173 2>&1 | tee fe-tunnel.log &
+          
+          ./cloudflared tunnel --url http://localhost:5173 > fe-tunnel.log 2>&1 &
+          ./cloudflared tunnel --url http://localhost:8545 > anvil-tunnel.log 2>&1 &
+          
+          echo "Waiting for tunnel URLs..."
           for i in $(seq 1 30); do
             FE_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' fe-tunnel.log | head -1)
-            if [ -n "$FE_URL" ]; then
-              echo "FE_TUNNEL_URL=$FE_URL" >> $GITHUB_ENV
-              echo "✅ Frontend tunnel: $FE_URL"
-              break
-            fi
+            if [ -n "$FE_URL" ]; then break; fi
             sleep 2
           done
-
-      - name: Start Anvil RPC tunnel
-        run: |
-          ./cloudflared tunnel --url http://localhost:8545 2>&1 | tee anvil-tunnel.log &
+          
           for i in $(seq 1 30); do
             ANVIL_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' anvil-tunnel.log | head -1)
-            if [ -n "$ANVIL_URL" ]; then
-              echo "ANVIL_TUNNEL_URL=$ANVIL_URL" >> $GITHUB_ENV
-              echo "✅ Anvil tunnel: $ANVIL_URL"
-              break
-            fi
+            if [ -n "$ANVIL_URL" ]; then break; fi
             sleep 2
           done
+          
+          echo "Frontend: $FE_URL"
+          echo "Anvil: $ANVIL_URL"
+          
+          echo "Posting PR comment..."
+          COMMENT_BODY="## ⛓️ Web3 Preview
 
-      # ── PR Comment ──────────────────────────────────────────────────────
-      - name: Find existing Web3 comment
-        uses: peter-evans/find-comment@v3
-        id: find_comment
-        with:
-          issue-number: ${{ inputs.pr_number }}
-          comment-author: "github-actions[bot]"
-          body-includes: "Web3 Preview"
+          | Service | URL |
+          |---------|-----|
+          | **Frontend** | $FE_URL |
+          | **Anvil RPC** | $ANVIL_URL |
 
-      - name: Post or update PR comment
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ inputs.pr_number }}
-          comment-id: ${{ steps.find_comment.outputs.comment-id }}
-          edit-mode: replace
-          body: |
-            ## ⛓️ Web3 Preview
+          > ⚠️ Both tunnels are **live only while the workflow runs** (max 60 min).
 
-            | Service | URL |
-            |---------|-----|
-            | **Frontend** | ${{ env.FE_TUNNEL_URL }} |
-            | **Anvil RPC** | ${{ env.ANVIL_TUNNEL_URL }} |
+          ### 🦊 MetaMask Setup
+          1. Add network → RPC: \`$ANVIL_URL\` · Chain ID: \`31337\` · Symbol: \`ETH\`
+          2. Import key: \`0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\` (10k ETH)
+          3. Open frontend → connect wallet → switch to Anvil
 
-            > ⚠️ Both tunnels are **live only while the workflow runs** (max 60 min).
+          | Detail | Value |
+          |--------|-------|
+          | Contract | \`${{ env.CONTRACT_ADDRESS }}\` |
+          | Commit | \`${{ env.PR_SHA }}\` |
+          | Workflow | [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
 
-            ### 🦊 MetaMask Setup
-            1. Add network → RPC: `${{ env.ANVIL_TUNNEL_URL }}` · Chain ID: `31337` · Symbol: `ETH`
-            2. Import key: `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80` (10k ETH)
-            3. Open frontend → connect wallet → switch to Anvil
-
-            | Detail | Value |
-            |--------|-------|
-            | Contract | `${{ env.CONTRACT_ADDRESS }}` |
-            | Commit | `${{ env.PR_SHA }}` |
-            | Workflow | [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
-
-            ---
-
-      - name: Keep Alive
-        run: |
+          ---
+          *🤖 Powered by Foundry Anvil + Cloudflare Quick Tunnel (free, no accounts)*"
+          
+          gh pr comment ${{ inputs.pr_number }} --body "$COMMENT_BODY" || echo "Warning: Failed to post PR comment"
+          
           echo "🟢 Web3 Preview is LIVE!"
-          echo "The tunnel will remain open for 60 minutes or until this workflow is cancelled."
           sleep 3600
+
+      # ── Cleanup Comment ────────────────────────────────────────────────────────
+      - name: Cleanup PR Preview Comment
+        if: cancelled() || failure() || success()
+        run: |
+          COMMENT_BODY="## 🛑 Web3 Preview Stopped
+          
+          The preview environment for this PR has been closed. 
+          Run the workflow again to spin up a new instance."
+          
+          gh pr comment ${{ inputs.pr_number }} --body "$COMMENT_BODY" || echo "Warning: Failed to post PR comment"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
