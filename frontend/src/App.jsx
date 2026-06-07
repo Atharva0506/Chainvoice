@@ -37,10 +37,12 @@ import GenerateLink from "./page/GenerateLink";
 import CreateInvoicesBatch from "./page/CreateInvoicesBatch";
 import BatchPayment from "./page/BatchPayment";
 import NotFound from "./page/NotFound";
+import PRDemoModal from "./components/PRDemoModal";
 
 function App() {
   return (
     <div className="bg-[#161920]">
+      <PRDemoModal />
       <Toaster
         position="top-center"
         reverseOrder={false}
