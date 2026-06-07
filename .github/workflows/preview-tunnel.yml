@@ -137,7 +137,7 @@ jobs:
           ---
           *🤖 Powered by Cloudflare Quick Tunnel (free, no account)*"
 
-          gh pr comment ${{ env.PR_NUMBER }} --body "$COMMENT_BODY"
+          gh pr comment ${{ env.PR_NUMBER }} --body "$COMMENT_BODY" || echo "Warning: Failed to post PR comment"
 
           # 4. Keep Alive
           echo "🟢 Preview live at: $TUNNEL_URL"
