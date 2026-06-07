@@ -79,6 +79,7 @@ jobs:
         working-directory: ${{ env.FRONTEND_DIR }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_IS_PR_PREVIEW: "true"
           VITE_WALLETCONNECT_PROJECT_ID: ${{ secrets.VITE_WALLETCONNECT_PROJECT_ID }}
           VITE_CONTRACT_ADDRESS_11155111: "0x54a542dCDC306eE281b5De4613EcEfe6e6ABc562"
           VITE_CONTRACT_ADDRESS_61: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
@@ -136,7 +137,7 @@ jobs:
           ---
           *🤖 Powered by Cloudflare Quick Tunnel (free, no account)*"
 
-          gh pr comment ${{ env.PR_NUMBER }} --body "$COMMENT_BODY"
+          gh pr comment ${{ env.PR_NUMBER }} --body "$COMMENT_BODY" || echo "Warning: Failed to post PR comment"
 
           # 4. Keep Alive
           echo "🟢 Preview live at: $TUNNEL_URL"
