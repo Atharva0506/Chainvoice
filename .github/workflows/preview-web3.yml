@@ -191,3 +191,9 @@ jobs:
             | Workflow | [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
 
             ---
+
+      - name: Keep Alive
+        run: |
+          echo "🟢 Web3 Preview is LIVE!"
+          echo "The tunnel will remain open for 60 minutes or until this workflow is cancelled."
+          sleep 3600
