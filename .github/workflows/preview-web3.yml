@@ -19,8 +19,8 @@
 # - Environments are ephemeral — destroyed when workflow stops
 # =============================================================================
 
-name: "⛓️ Web3 PR Preview (Anvil)"
-
+name: "Web3 PR Preview (Anvil)"
+s
 on:
   workflow_dispatch:
     inputs:
@@ -65,7 +65,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: nightly
+          version: nightly-fea38858b0e8d97acb516ccff163a6f5e28f7fa1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
