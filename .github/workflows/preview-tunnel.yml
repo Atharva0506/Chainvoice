@@ -14,7 +14,7 @@
 # - No persistent infrastructure to manage
 # =============================================================================
 
-name: "PR Preview (Cloudflare Tunnel)"
+name: "🔗 PR Preview (Cloudflare Tunnel)"
 
 on:
   workflow_dispatch:
@@ -100,8 +100,18 @@ jobs:
 
           # 2. Start Cloudflare Tunnel
           echo "Starting Cloudflare Tunnel with retry logic..."
-          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
-          chmod +x cloudflared
+          
+          echo "Downloading cloudflared binary..."
+          for dl_attempt in 1 2 3 4 5; do
+            curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+            chmod +x cloudflared
+            if ./cloudflared --version > /dev/null 2>&1; then
+              echo "✅ Successfully downloaded cloudflared."
+              break
+            fi
+            echo "Attempt $dl_attempt failed to download a valid binary (GitHub might be rate-limiting). Retrying in 3s..."
+            sleep 3
+          done
           
           TUNNEL_URL=""
           for attempt in 1 2 3; do
