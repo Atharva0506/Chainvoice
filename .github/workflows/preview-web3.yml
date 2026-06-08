@@ -116,25 +116,45 @@ jobs:
             sleep 2
           done
           
-          echo "Starting Cloudflare Tunnels..."
+          echo "Starting Cloudflare Tunnels with retry logic..."
           curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
           
-          ./cloudflared tunnel --url http://localhost:5173 > fe-tunnel.log 2>&1 &
-          ./cloudflared tunnel --url http://localhost:8545 > anvil-tunnel.log 2>&1 &
+          # Function to start a tunnel with retries
+          start_tunnel() {
+            local port=$1
+            local log_file=$2
+            local url=""
+            for attempt in 1 2 3; do
+              echo "Attempt $attempt to start tunnel on port $port..."
+              ./cloudflared tunnel --url http://localhost:$port > $log_file 2>&1 &
+              local pid=$!
+              for i in $(seq 1 15); do
+                url=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' $log_file | head -1)
+                if [ -n "$url" ]; then break; fi
+                sleep 2
+              done
+              if [ -n "$url" ]; then
+                echo "$url"
+                return 0
+              fi
+              echo "Attempt $attempt failed. Logs:" >&2
+              cat $log_file >&2
+              kill -9 $pid 2>/dev/null || true
+              sleep 2
+            done
+            return 1
+          }
+
+          FE_URL=$(start_tunnel 5173 fe-tunnel.log) || {
+            echo "❌ Failed to get Frontend tunnel URL after 3 attempts."
+            exit 1
+          }
           
-          echo "Waiting for tunnel URLs..."
-          for i in $(seq 1 30); do
-            FE_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' fe-tunnel.log | head -1)
-            if [ -n "$FE_URL" ]; then break; fi
-            sleep 2
-          done
-          
-          for i in $(seq 1 30); do
-            ANVIL_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' anvil-tunnel.log | head -1)
-            if [ -n "$ANVIL_URL" ]; then break; fi
-            sleep 2
-          done
+          ANVIL_URL=$(start_tunnel 8545 anvil-tunnel.log) || {
+            echo "❌ Failed to get Anvil tunnel URL after 3 attempts."
+            exit 1
+          }
           
           echo "Frontend: $FE_URL"
           echo "Anvil: $ANVIL_URL"
