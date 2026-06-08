@@ -61,51 +61,53 @@ jobs:
           echo "PR_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           echo "PR_BRANCH=$(git branch --show-current)" >> $GITHUB_ENV
 
-      # ── Foundry + Anvil ─────────────────────────────────────────────────
+      # ── Foundry + Node.js ─────────────────────────────────────────────────
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
 
-      - name: Start Anvil
-        run: |
-          anvil --host 0.0.0.0 --port 8545 &
-          for i in $(seq 1 15); do
-            if curl -s -X POST http://localhost:8545 \
-              -H "Content-Type: application/json" \
-              --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-              > /dev/null 2>&1; then
-              echo "✅ Anvil ready on port 8545"
-              break
-            fi
-            sleep 1
-          done
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Deploy Chainvoice contract
-        working-directory: ${{ env.CONTRACTS_DIR }}
-        run: |
-          forge script script/Chaivoice.s.sol \
-            --rpc-url http://localhost:8545 \
-            --private-key ${{ env.DEPLOYER_PRIVATE_KEY }} \
-            --broadcast
-          # First deploy on fresh Anvil is deterministic
-          echo "CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3" >> $GITHUB_ENV
-          echo "✅ Contract deployed"
-
-      # ── Start Services & Post Comment ───────────────────────────────────
-      - name: Start Services and Keep Alive
+      - name: Install frontend dependencies
         working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm i
+
+      # ── Start Services & Deploy ───────────────────────────────────────────
+      - name: Start Services, Deploy, and Keep Alive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_CONTRACT_ADDRESS_31337: ${{ env.CONTRACT_ADDRESS }}
           VITE_WALLETCONNECT_PROJECT_ID: ${{ secrets.VITE_WALLETCONNECT_PROJECT_ID }}
           VITE_CONTRACT_ADDRESS_11155111: "0x54a542dCDC306eE281b5De4613EcEfe6e6ABc562"
           VITE_CONTRACT_ADDRESS_61: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
           VITE_CONTRACT_ADDRESS_137: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
           VITE_LIT_BYPASS: "true"
         run: |
+          echo "Starting Anvil blockchain..."
+          anvil --host 0.0.0.0 --port 8545 > anvil.log 2>&1 &
+          
+          for i in $(seq 1 15); do
+            if curl -s -X POST http://localhost:8545 -H "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
+              echo "✅ Anvil ready"
+              break
+            fi
+            sleep 1
+          done
+          
+          echo "Deploying Chainvoice contract..."
+          cd ${{ env.CONTRACTS_DIR }}
+          forge script script/Chaivoice.s.sol --rpc-url http://localhost:8545 --private-key ${{ env.DEPLOYER_PRIVATE_KEY }} --broadcast
+          CONTRACT_ADDRESS="0x5FbDB2315678afecb367f032d93F642f64180aa3"
+          echo "✅ Contract deployed to $CONTRACT_ADDRESS"
+          cd ../${{ env.FRONTEND_DIR }}
+          
           echo "Starting Vite dev server..."
+          export VITE_CONTRACT_ADDRESS_31337=$CONTRACT_ADDRESS
           npm run dev -- --host 0.0.0.0 > server.log 2>&1 &
+          
           for i in $(seq 1 30); do
             if curl -s http://localhost:5173 > /dev/null 2>&1; then
               echo "✅ Frontend ready"
@@ -154,7 +156,7 @@ jobs:
 
           | Detail | Value |
           |--------|-------|
-          | Contract | \`${{ env.CONTRACT_ADDRESS }}\` |
+          | Contract | \`$CONTRACT_ADDRESS\` |
           | Commit | \`${{ env.PR_SHA }}\` |
           | Workflow | [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
 
