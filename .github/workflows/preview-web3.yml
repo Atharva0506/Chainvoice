@@ -20,7 +20,7 @@
 # =============================================================================
 
 name: "Web3 PR Preview (Anvil)"
-s
+
 on:
   workflow_dispatch:
     inputs:
