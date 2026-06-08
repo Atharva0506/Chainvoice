@@ -20,7 +20,7 @@
 # =============================================================================
 
 name: "Web3 PR Preview (Anvil)"
-s
+
 on:
   workflow_dispatch:
     inputs:
@@ -80,6 +80,7 @@ jobs:
       - name: Start Services, Deploy, and Keep Alive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_IS_PR_PREVIEW: "true"
           VITE_WALLETCONNECT_PROJECT_ID: ${{ secrets.VITE_WALLETCONNECT_PROJECT_ID }}
           VITE_CONTRACT_ADDRESS_11155111: "0x54a542dCDC306eE281b5De4613EcEfe6e6ABc562"
           VITE_CONTRACT_ADDRESS_61: "0xD044A85a5daC307217B9bF313A90E8a60AF7DdCe"
