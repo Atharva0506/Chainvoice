@@ -14,7 +14,7 @@
 # - No persistent infrastructure to manage
 # =============================================================================
 
-name: "🔗 PR Preview (Cloudflare Tunnel)"
+name: "PR Preview (Cloudflare Tunnel)"
 
 on:
   workflow_dispatch:
