@@ -31,8 +31,8 @@ function Landing() {
               </motion.h1>
 
               <p className="text-xl text-gray-300 leading-relaxed">
-                End-to-end encrypted, multi-chain invoicing with Lit Protocol
-                and support for 1000+ ERC20 tokens.
+                End-to-end encrypted, multi-chain invoicing powered by Lit Protocol
+                with support for 1000+ ERC20 tokens across all major blockchains.
               </p>
 
               <div className="flex flex-col space-y-6">
