@@ -27,7 +27,7 @@ function Landing() {
                   Web3 Invoicing
                 </span>{" "}
                 <br />
-                Made Simple
+                Made Simple & Secure
               </motion.h1>
 
               <p className="text-xl text-gray-300 leading-relaxed">
