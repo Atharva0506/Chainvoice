@@ -17,7 +17,9 @@ import { generateInvoicePDF } from "@/utils/generateInvoicePDF";
 import { formatInvoiceTotal } from "@/utils/invoiceExportHelpers";
 import { useInvoiceExport } from "@/hooks/useInvoiceExport";
 import { getReceivedInvoices as getLocalReceivedInvoices, storeInvoice, updateInvoiceStatus } from "../services/invoiceStorage/invoiceDB.js";
-
+import { subscribeToInvoices, queryStoredInvoices } from "@/services/waku/wakuInvoiceMessaging.js";
+import { deriveWakuKeyPair, hasCachedKeys } from "@/services/waku/wakuKeyManager.js";
+import { useWakuKeys } from "@/hooks/useWakuKeys";
 import { ERC20_ABI } from "@/contractsABI/ERC20_ABI";
 import toast from "react-hot-toast";
 import CancelIcon from "@mui/icons-material/Cancel";
@@ -86,8 +88,10 @@ function ReceivedInvoice() {
   const [error, setError] = useState(null);
 
   const [paymentLoading, setPaymentLoading] = useState({});
-  const [networkLoading, setNetworkLoading] = useState(false);
   const [showWalletAlert, setShowWalletAlert] = useState(!isConnected);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const { isRegistered, deriveKeysOnly, isLoading: wakuLoading } = useWakuKeys();
+  const wakuUnsubRef = useRef(null);
 
   // Error handling states
   const [paymentError, setPaymentError] = useState("");
@@ -632,6 +636,8 @@ function ReceivedInvoice() {
   useEffect(() => {
     if (!walletClient || !address) return;
 
+    let cancelled = false;
+
     const fetchReceivedInvoices = async () => {
       try {
         setLoading(true);
@@ -785,18 +791,91 @@ function ReceivedInvoice() {
         const fee = await contract.fee();
         setFee(fee);
       } catch (error) {
-        console.error("Fetch error:", error);
-        setError(
-          "Unable to load invoices. The connected network is not supported or the contract is not deployed on this network. Please switch to a supported network and try again."
-        );
-
+        console.error("Error fetching received invoices:", error);
+        setError("Failed to fetch invoices");
       } finally {
         setLoading(false);
       }
     };
 
     fetchReceivedInvoices();
-  }, [walletClient, address, tokens]);
+
+    // Waku Subscription Setup
+    const startSubscription = async () => {
+      try {
+        if (!hasCachedKeys(address)) return; // Only subscribe if keys exist
+        const provider = new BrowserProvider(walletClient);
+        const signer = await provider.getSigner();
+        const { privateKey } = await deriveWakuKeyPair(signer, address);
+
+        const storeWakuMessage = async (message) => {
+          try {
+            await storeInvoice({
+              invoiceId: message.invoiceId,
+              chainId: message.chainId,
+              from: message.data?.senderAddress || message.data?.from,
+              to: address.toLowerCase(),
+              data: message.data,
+              isPaid: false,
+              isCancelled: false,
+            });
+            return true;
+          } catch (err) {
+            console.error('[ReceivedInvoice] Failed to store Waku message:', err);
+            return false;
+          }
+        };
+
+        try {
+          const storedMessages = await queryStoredInvoices(privateKey, chainId);
+          let newCount = 0;
+          for (const message of storedMessages) {
+            if (cancelled) break;
+            const stored = await storeWakuMessage(message);
+            if (stored) newCount++;
+          }
+          if (newCount > 0 && !cancelled) {
+            setRefreshTrigger(p => p + 1);
+          }
+        } catch (storeErr) {
+          console.warn('[ReceivedInvoice] Waku Store query failed:', storeErr);
+        }
+
+        if (cancelled) return;
+
+        const unsubscribe = await subscribeToInvoices(
+          privateKey,
+          chainId,
+          async (message) => {
+            if (cancelled) return;
+            const stored = await storeWakuMessage(message);
+            if (stored) {
+              setRefreshTrigger(p => p + 1);
+              toast.success('New invoice received!');
+            }
+          }
+        );
+
+        if (!cancelled) {
+          wakuUnsubRef.current = unsubscribe;
+        } else {
+          if (typeof unsubscribe === 'function') unsubscribe();
+        }
+      } catch (err) {
+        console.warn('[ReceivedInvoice] Waku setup failed:', err);
+      }
+    };
+
+    startSubscription();
+
+    return () => {
+      cancelled = true;
+      if (typeof wakuUnsubRef.current === 'function') {
+        wakuUnsubRef.current();
+        wakuUnsubRef.current = null;
+      }
+    };
+  }, [address, chainId, isConnected, walletClient, refreshTrigger]);
 
   const toggleDrawer = (invoice) => (event) => {
     if (
@@ -882,6 +961,25 @@ function ReceivedInvoice() {
       </div>
       <div className=" md:p-6 ">
         <div className="max-w-8xl mx-auto">
+
+          {/* Waku Registration Alert */}
+          {!isRegistered && isConnected && !loading && (
+            <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-4 mt-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center justify-between">
+                <div className="text-sm text-yellow-800">
+                  <strong>Waku Messaging Not Registered:</strong> You need to register your Waku key to receive incoming invoices instantly.
+                </div>
+                <Button 
+                  onClick={() => deriveKeysOnly()} 
+                  disabled={wakuLoading}
+                  className="bg-yellow-600 hover:bg-yellow-700 text-white ml-4"
+                >
+                  {wakuLoading ? <CircularProgress size={16} sx={{ color: 'white', mr: 1 }} /> : "Register Now"}
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between items-center mb-2">
             <div>
               <h2 className="text-2xl font-bold text-white">

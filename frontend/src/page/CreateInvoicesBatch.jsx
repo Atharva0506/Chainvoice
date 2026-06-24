@@ -38,6 +38,10 @@ import { Label } from "@/components/ui/label";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { storeInvoice } from "../services/invoiceStorage/invoiceDB.js";
+import { useWaku } from "@/hooks/useWaku";
+import { useWakuKeys } from "@/hooks/useWakuKeys";
+import { sendEncryptedInvoice } from "@/services/waku/wakuInvoiceMessaging.js";
+import { hexToBytes } from "@/services/waku/wakuKeyManager.js";
 
 
 
@@ -60,8 +64,8 @@ function CreateInvoicesBatch() {
   const { isConnected, chainId } = useAccount();
   const account = useAccount();
   const [dueDate, setDueDate] = useState(new Date());
-  const [issueDate, setIssueDate] = useState(new Date());
   const [loading, setLoading] = useState(false);
+  const { deriveAndRegister, isRegistered, isLoading: wakuLoading } = useWakuKeys();
   const navigate = useNavigate();
 
   const itemRefs = useRef({});
@@ -447,6 +451,18 @@ function CreateInvoicesBatch() {
         const payload = invoicePayloads[eventIndex];
         if (!payload) continue;
 
+        let wakuDelivered = false;
+        try {
+          const receiverPubKeyHex = await contract.getWakuPublicKey(payload.client.address);
+          if (receiverPubKeyHex && receiverPubKeyHex !== '0x' && receiverPubKeyHex.length > 2) {
+            const receiverKeyBytes = hexToBytes(receiverPubKeyHex);
+            await sendEncryptedInvoice(payload, receiverKeyBytes, account.chainId, invoiceId);
+            wakuDelivered = true;
+          }
+        } catch (wakuErr) {
+          console.warn(`Waku send for invoice ${invoiceId} failed (non-critical):`, wakuErr);
+        }
+
         try {
           await storeInvoice({
             invoiceId,
@@ -455,7 +471,7 @@ function CreateInvoicesBatch() {
             to: payload.client.address.toLowerCase(),
             isPaid: false,
             isCancelled: false,
-            wakuDelivered: false,
+            wakuDelivered,
             invoiceDataHash: "",
             data: payload,
           });
@@ -507,6 +523,23 @@ function CreateInvoicesBatch() {
           onDismiss={() => setShowWalletAlert(false)}
         />
       </div>
+
+      {!isRegistered && isConnected && (
+        <div className="w-full max-w-7xl mx-auto px-4 md:px-6 mb-4">
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center justify-between">
+            <div className="text-sm text-yellow-800">
+              <strong>Waku Messaging Not Registered:</strong> You need to register your Waku key to receive encrypted invoices over the peer-to-peer network.
+            </div>
+            <Button 
+              onClick={() => deriveAndRegister()} 
+              disabled={wakuLoading}
+              className="bg-yellow-600 hover:bg-yellow-700 text-white ml-4"
+            >
+              {wakuLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : "Register Now"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 md:px-6">
         {/* Simple Header */}
