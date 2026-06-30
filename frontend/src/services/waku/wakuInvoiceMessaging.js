@@ -51,9 +51,27 @@ export async function sendEncryptedInvoice(
     JSON.stringify(message, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
   );
 
-  const result = await node.lightPush.send(encoder, { payload });
-  if (import.meta.env.DEV) console.log('[WakuInvoiceMessaging] Invoice sent via Waku:', result);
-  return result;
+  // Retry up to 3 times — the Waku SDK can throw transient
+  // "not valid Id" errors from libp2p's peer store on first push.
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const result = await node.lightPush.send(encoder, { payload });
+      if (import.meta.env.DEV) console.log('[WakuInvoiceMessaging] Invoice sent via Waku:', result);
+      return result;
+    } catch (err) {
+      lastError = err;
+      console.warn(
+        `[WakuInvoiceMessaging] LightPush attempt ${attempt}/3 failed:`,
+        err.message
+      );
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+  }
+  // All retries exhausted — throw so callers know it failed
+  throw lastError;
 }
 
 /**
