@@ -1,4 +1,5 @@
 import { createEncoder, createDecoder } from '@waku/message-encryption/ecies';
+import { utils } from '@waku/sdk';
 import { wakuService } from './wakuService.js';
 
 /**
@@ -13,14 +14,13 @@ export function getContentTopic(chainId) {
 }
 
 /**
- * Get the default routing info for the un-sharded Waku network.
+ * Get the autosharded routing info for the default Waku network.
  */
-function getRoutingInfo() {
-  return {
-    clusterId: 0,
-    shardId: 0,
-    pubsubTopic: "/waku/2/default-waku/proto"
-  };
+function getRoutingInfo(contentTopic) {
+  return utils.createRoutingInfo(
+    { clusterId: 1, numShardsInCluster: 8 },
+    { contentTopic }
+  );
 }
 
 /**
@@ -60,7 +60,7 @@ export async function sendEncryptedInvoice(
 
   const encoder = createEncoder({
     contentTopic,
-    routingInfo: getRoutingInfo(),
+    routingInfo: getRoutingInfo(contentTopic),
     publicKey: receiverPublicKey,
   });
 
@@ -108,7 +108,7 @@ export async function subscribeToInvoices(privateKey, chainId, onMessage) {
 
   const decoder = createDecoder(
     contentTopic,
-    getRoutingInfo(),
+    getRoutingInfo(contentTopic),
     privateKey
   );
 
@@ -161,7 +161,7 @@ export async function queryStoredInvoices(privateKey, chainId) {
 
   const decoder = createDecoder(
     contentTopic,
-    getRoutingInfo(),
+    getRoutingInfo(contentTopic),
     privateKey
   );
   const messages = [];
