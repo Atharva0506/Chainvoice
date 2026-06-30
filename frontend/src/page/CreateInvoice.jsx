@@ -47,6 +47,7 @@ import { useWaku } from "@/hooks/useWaku";
 import { useWakuKeys } from "@/hooks/useWakuKeys";
 import { sendEncryptedInvoice } from "@/services/waku/wakuInvoiceMessaging.js";
 import { hexToBytes } from "@/services/waku/wakuKeyManager.js";
+import { computeInvoiceHash } from "@/services/waku/invoiceHashUtils.js";
 
 import ProductCatalogImport from "@/components/ProductCatalogImport";
 import ProductAutocompleteInput from "@/components/ProductAutocompleteInput";
@@ -411,9 +412,8 @@ const validateClientAddress = useCallback((value) => {
 
       const invoiceString = JSON.stringify(invoicePayload);
 
-      // 2. Base64 Encode Payload
-      const encryptedStringBase64 = btoa(invoiceString);
-      const dataToEncryptHash = "";
+      // 2. Compute invoice data hash for on-chain storage
+      const invoiceDataHash = computeInvoiceHash(invoicePayload);
 
       if (!account?.chainId) {
         throw new Error("Missing chainId: wallet connected but chain not configured");
@@ -433,8 +433,7 @@ const validateClientAddress = useCallback((value) => {
         data.clientAddress,
         ethers.parseUnits(totalAmountDue.toString(), paymentToken.decimals),
         paymentToken.address,
-        encryptedStringBase64,
-        dataToEncryptHash
+        invoiceDataHash
       );
 
       const receipt = await tx.wait();
@@ -475,7 +474,7 @@ const validateClientAddress = useCallback((value) => {
             isPaid: false,
             isCancelled: false,
             wakuDelivered,
-            invoiceDataHash: dataToEncryptHash,
+            invoiceDataHash,
             data: invoicePayload,
           });
         } catch (storageErr) {

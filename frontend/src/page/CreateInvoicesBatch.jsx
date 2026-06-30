@@ -42,6 +42,7 @@ import { useWaku } from "@/hooks/useWaku";
 import { useWakuKeys } from "@/hooks/useWakuKeys";
 import { sendEncryptedInvoice } from "@/services/waku/wakuInvoiceMessaging.js";
 import { hexToBytes } from "@/services/waku/wakuKeyManager.js";
+import { computeInvoiceHash } from "@/services/waku/invoiceHashUtils.js";
 
 
 
@@ -335,8 +336,7 @@ function CreateInvoicesBatch() {
       // Prepare batch arrays
       const tos = [];
       const amounts = [];
-      const encryptedPayloads = [];
-      const encryptedHashes = [];
+      const invoiceDataHashes = []; // bytes32[]
 
 
 
@@ -390,8 +390,7 @@ function CreateInvoicesBatch() {
         const invoiceString = JSON.stringify(invoicePayload);
         invoicePayloads.push(invoicePayload);
 
-        const encryptedStringBase64 = btoa(invoiceString);
-        const dataToEncryptHash = "";
+        const invoiceDataHash = computeInvoiceHash(invoicePayload);
 
         // Add to batch arrays
         tos.push(row.clientAddress);
@@ -401,8 +400,7 @@ function CreateInvoicesBatch() {
             paymentToken.decimals
           )
         );
-        encryptedPayloads.push(encryptedStringBase64);
-        encryptedHashes.push(dataToEncryptHash);
+        invoiceDataHashes.push(invoiceDataHash);
       }
 
       toast.success("All invoices encrypted successfully!");
@@ -423,8 +421,7 @@ function CreateInvoicesBatch() {
         tos,
         amounts,
         paymentToken.address,
-        encryptedPayloads,
-        encryptedHashes
+        invoiceDataHashes
       );
 
       toast("Transaction submitted! Waiting for confirmation...");
@@ -472,7 +469,7 @@ function CreateInvoicesBatch() {
             isPaid: false,
             isCancelled: false,
             wakuDelivered,
-            invoiceDataHash: "",
+            invoiceDataHash: invoiceDataHashes[eventIndex],
             data: payload,
           });
         } catch (err) {

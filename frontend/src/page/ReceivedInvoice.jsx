@@ -683,10 +683,9 @@ function ReceivedInvoice() {
             const to = invoice[2].toLowerCase();
             const isPaid = invoice[5];
             const isCancelled = invoice[6];
-            const encryptedStringBase64 = invoice[7];
-            const dataToEncryptHash = invoice[8];
+            const invoiceDataHash = invoice[7]; // bytes32
 
-            if (!encryptedStringBase64 || !dataToEncryptHash) continue;
+            if (!invoiceDataHash) continue;
 
             const currentUserAddress = address.toLowerCase();
             if (currentUserAddress !== from && currentUserAddress !== to) {
@@ -704,26 +703,15 @@ function ReceivedInvoice() {
                 await updateInvoiceStatus(chainId, id, { isPaid, isCancelled });
               }
             } else {
-              if (!encryptedStringBase64) continue;
-              const decryptedString = atob(encryptedStringBase64);
-              parsed = JSON.parse(decryptedString);
-
-              // Cache it locally
-              try {
-                await storeInvoice({
-                  invoiceId: id,
-                  chainId,
-                  from,
-                  to,
-                  isPaid,
-                  isCancelled,
-                  wakuDelivered: false,
-                  invoiceDataHash: dataToEncryptHash,
-                  data: parsed
-                });
-              } catch (err) {
-                console.warn(`Failed to cache invoice ${id} locally`, err);
-              }
+              // No local payload from Waku — build a minimal stub from on-chain data
+              // so the invoice still appears in the list.
+              parsed = {
+                amountDue: invoice[3].toString(),
+                user: { address: from },
+                client: { address: to },
+                paymentToken: { address: invoice[4] },
+                _onChainOnly: true, // Flag: full payload not yet received via Waku
+              };
             }
 
             parsed["id"] = BigInt(id);
