@@ -13,6 +13,17 @@ export function getContentTopic(chainId) {
 }
 
 /**
+ * Get the default routing info for the un-sharded Waku network.
+ */
+function getRoutingInfo() {
+  return {
+    clusterId: 0,
+    shardId: 0,
+    pubsubTopic: "/waku/2/default-waku/proto"
+  };
+}
+
+/**
  * Send encrypted invoice data over the Waku network.
  *
  * The sender encrypts the invoice payload with the receiver's ECIES public key
@@ -33,17 +44,23 @@ export async function sendEncryptedInvoice(
   const node = await wakuService.initialize();
   const contentTopic = getContentTopic(chainId);
 
+  // Remove UI-specific circular properties before stringifying
+  const cleanData = { ...invoiceData };
+  delete cleanData.__rawInvoiceData;
+  delete cleanData._onChainOnly;
+
   // Wrap invoice with metadata for the receiver
   const message = {
     type: 'invoice',
     invoiceId: invoiceId.toString(),
     chainId: chainId,
     timestamp: Date.now(),
-    data: invoiceData,
+    data: cleanData,
   };
 
   const encoder = createEncoder({
     contentTopic,
+    routingInfo: getRoutingInfo(),
     publicKey: receiverPublicKey,
   });
 
@@ -89,7 +106,11 @@ export async function subscribeToInvoices(privateKey, chainId, onMessage) {
   const node = await wakuService.initialize();
   const contentTopic = getContentTopic(chainId);
 
-  const decoder = createDecoder(contentTopic, privateKey);
+  const decoder = createDecoder(
+    contentTopic,
+    getRoutingInfo(),
+    privateKey
+  );
 
   let unsubscribe;
   try {
@@ -138,7 +159,11 @@ export async function queryStoredInvoices(privateKey, chainId) {
   const node = await wakuService.initialize();
   const contentTopic = getContentTopic(chainId);
 
-  const decoder = createDecoder(contentTopic, privateKey);
+  const decoder = createDecoder(
+    contentTopic,
+    getRoutingInfo(),
+    privateKey
+  );
   const messages = [];
 
   for await (const msgPromises of node.store.queryGenerator([decoder])) {
