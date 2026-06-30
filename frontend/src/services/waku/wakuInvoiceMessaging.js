@@ -62,6 +62,7 @@ export async function sendEncryptedInvoice(
     contentTopic,
     routingInfo: getRoutingInfo(contentTopic),
     publicKey: receiverPublicKey,
+    ephemeral: false, // Ensure message is retained by Store nodes for offline retrieval
   });
 
   const payload = new TextEncoder().encode(
@@ -74,8 +75,11 @@ export async function sendEncryptedInvoice(
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const result = await node.lightPush.send(encoder, { payload });
-      if (import.meta.env.DEV) console.log('[WakuInvoiceMessaging] Invoice sent via Waku:', result);
-      return result;
+      if (result.successes && result.successes.length > 0) {
+        if (import.meta.env.DEV) console.log('[WakuInvoiceMessaging] Invoice sent via Waku:', result);
+        return result;
+      }
+      throw new Error(`Light push rejected by peers. No successes.`);
     } catch (err) {
       lastError = err;
       console.warn(
