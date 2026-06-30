@@ -49,6 +49,22 @@ class WakuService {
           try { await this.node.stop(); } catch { /* ignore */ }
           this.node = null;
         }
+
+        // Workaround for Waku libp2p peer store corruption ("not valid Id" error)
+        if (err.message && err.message.includes('not valid Id')) {
+          console.warn("[WakuService] Clearing corrupted libp2p peer store");
+          try {
+            window.indexedDB.deleteDatabase("libp2p");
+            window.indexedDB.deleteDatabase("waku");
+            if (window.indexedDB.databases) {
+              const dbs = await window.indexedDB.databases();
+              dbs.forEach(db => {
+                if (db.name && db.name.includes("libp2p")) window.indexedDB.deleteDatabase(db.name);
+              });
+            }
+          } catch (e) { /* ignore */ }
+        }
+
         if (attempt < MAX_RETRIES) {
           // Brief pause before retry
           await new Promise((r) => setTimeout(r, 2000));

@@ -262,6 +262,10 @@ function SentInvoice() {
               }
             }
 
+            if (parsed._onChainOnly && parsed.paymentToken?.decimals) {
+              parsed.amountDue = ethers.formatUnits(parsed.amountDue, parsed.paymentToken.decimals);
+            }
+
             decryptedInvoices.push(parsed);
           } catch (err) {
             console.error(`Error processing invoice ${invoice[0]}:`, err);
@@ -449,8 +453,10 @@ function SentInvoice() {
   };
 
   const formatDate = (issueDate) => {
+    if (!issueDate) return "N/A";
     const date = new Date(issueDate);
-    return date.toLocaleString();
+    if (isNaN(date.getTime())) return "N/A";
+    return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
   };
 
   return (
