@@ -375,7 +375,7 @@ function SentInvoice() {
       toast.success("Invoice data sent via Waku successfully!");
     } catch (err) {
       console.error("[SentInvoice] Retry Waku send failed:", err);
-      toast.error("Failed to send invoice via Waku. Please try again.");
+      toast.error(err?.message || "Failed to send invoice via Waku. Please try again.");
     } finally {
       setWakuSending(false);
     }

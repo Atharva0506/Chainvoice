@@ -79,7 +79,7 @@ export async function sendEncryptedInvoice(
         if (import.meta.env.DEV) console.log('[WakuInvoiceMessaging] Invoice sent via Waku:', result);
         return result;
       }
-      throw new Error(`Light push rejected by peers. No successes.`);
+      throw new Error("Waku testnet nodes rejected the message (likely Rate Limited or Overloaded).");
     } catch (err) {
       lastError = err;
       console.warn(
