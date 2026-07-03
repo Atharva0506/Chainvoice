@@ -37,15 +37,14 @@ import { format } from "date-fns";
 import { Label } from "@/components/ui/label";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
+import { storeInvoice } from "../services/invoiceStorage/invoiceDB.js";
+import { useWaku } from "@/hooks/useWaku";
+import { useWakuKeys } from "@/hooks/useWakuKeys";
+import { sendEncryptedInvoice } from "@/services/waku/wakuInvoiceMessaging.js";
+import { hexToBytes } from "@/services/waku/wakuKeyManager.js";
+import { computeInvoiceHash } from "@/services/waku/invoiceHashUtils.js";
 
-import { LitNodeClient } from "@lit-protocol/lit-node-client";
-import { encryptString } from "@lit-protocol/encryption/src/lib/encryption.js";
-import { LIT_ABILITY, LIT_NETWORK } from "@lit-protocol/constants";
-import {
-  createSiweMessageWithRecaps,
-  generateAuthSig,
-  LitAccessControlConditionResource,
-} from "@lit-protocol/auth-helpers";
+
 
 import TokenIntegrationRequest from "@/components/TokenIntegrationRequest";
 import { ERC20_ABI } from "@/contractsABI/ERC20_ABI";
@@ -66,10 +65,10 @@ function CreateInvoicesBatch() {
   const { isConnected, chainId } = useAccount();
   const account = useAccount();
   const [dueDate, setDueDate] = useState(new Date());
-  const [issueDate, setIssueDate] = useState(new Date());
   const [loading, setLoading] = useState(false);
+  const { deriveAndRegister, isRegistered, isLoading: wakuLoading } = useWakuKeys();
   const navigate = useNavigate();
-  const litClientRef = useRef(null);
+
   const itemRefs = useRef({});
 
   // Token selection state
@@ -132,20 +131,7 @@ function CreateInvoicesBatch() {
     );
   }, [invoiceRows.map((r) => JSON.stringify(r.itemData)).join(",")]);
 
-  // Initialize Lit
-  useEffect(() => {
-    const initLit = async () => {
-      if (!litClientRef.current) {
-        const client = new LitNodeClient({
-          litNetwork: LIT_NETWORK.DatilDev,
-          debug: false,
-        });
-        await client.connect();
-        litClientRef.current = client;
-      }
-    };
-    initLit();
-  }, []);
+
 
   useEffect(() => {
     setShowWalletAlert(!isConnected);
@@ -350,16 +336,13 @@ function CreateInvoicesBatch() {
       // Prepare batch arrays
       const tos = [];
       const amounts = [];
-      const encryptedPayloads = [];
-      const encryptedHashes = [];
+      const invoiceDataHashes = []; // bytes32[]
 
-      const litNodeClient = litClientRef.current;
-      if (!litNodeClient) {
-        toast.error("Encryption service not ready. Please try again.");
-        return;
-      }
+
 
       toast(`Processing ${validInvoices.length} invoices...`);
+
+      const invoicePayloads = [];
 
       // Process each invoice
       for (const [index, row] of validInvoices.entries()) {
@@ -405,72 +388,9 @@ function CreateInvoicesBatch() {
         };
 
         const invoiceString = JSON.stringify(invoicePayload);
+        invoicePayloads.push(invoicePayload);
 
-        const accessControlConditions = [
-          {
-            contractAddress: "",
-            standardContractType: "",
-            chain: "ethereum",
-            method: "",
-            parameters: [":userAddress"],
-            returnValueTest: {
-              comparator: "=",
-              value: account.address.toLowerCase(),
-            },
-          },
-          { operator: "or" },
-          {
-            contractAddress: "",
-            standardContractType: "",
-            chain: "ethereum",
-            method: "",
-            parameters: [":userAddress"],
-            returnValueTest: {
-              comparator: "=",
-              value: row.clientAddress.toLowerCase(),
-            },
-          },
-        ];
-
-        const { ciphertext, dataToEncryptHash } = await encryptString(
-          {
-            accessControlConditions,
-            dataToEncrypt: invoiceString,
-          },
-          litNodeClient
-        );
-
-        const sessionSigs = await litNodeClient.getSessionSigs({
-          chain: "ethereum",
-          resourceAbilityRequests: [
-            {
-              resource: new LitAccessControlConditionResource("*"),
-              ability: LIT_ABILITY.AccessControlConditionDecryption,
-            },
-          ],
-          authNeededCallback: async ({
-            uri,
-            expiration,
-            resourceAbilityRequests,
-          }) => {
-            const nonce = await litNodeClient.getLatestBlockhash();
-            const toSign = await createSiweMessageWithRecaps({
-              uri,
-              expiration,
-              resources: resourceAbilityRequests,
-              walletAddress: account.address,
-              nonce,
-              litNodeClient,
-            });
-
-            return await generateAuthSig({
-              signer,
-              toSign,
-            });
-          },
-        });
-
-        const encryptedStringBase64 = btoa(ciphertext);
+        const invoiceDataHash = computeInvoiceHash(invoicePayload);
 
         // Add to batch arrays
         tos.push(row.clientAddress);
@@ -480,8 +400,7 @@ function CreateInvoicesBatch() {
             paymentToken.decimals
           )
         );
-        encryptedPayloads.push(encryptedStringBase64);
-        encryptedHashes.push(dataToEncryptHash);
+        invoiceDataHashes.push(invoiceDataHash);
       }
 
       toast.success("All invoices encrypted successfully!");
@@ -502,12 +421,61 @@ function CreateInvoicesBatch() {
         tos,
         amounts,
         paymentToken.address,
-        encryptedPayloads,
-        encryptedHashes
+        invoiceDataHashes
       );
 
       toast("Transaction submitted! Waiting for confirmation...");
       const receipt = await tx.wait();
+
+      const iface = new ethers.Interface(ChainvoiceABI);
+      const invoiceIds = [];
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog(log);
+          if (parsed?.name === 'InvoiceCreated') {
+            invoiceIds.push(parsed.args[0].toString());
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (invoiceIds.length !== invoicePayloads.length) {
+        console.warn(`Expected ${invoicePayloads.length} InvoiceCreated events, got ${invoiceIds.length}`);
+      }
+
+      for (const [eventIndex, invoiceId] of invoiceIds.entries()) {
+        const payload = invoicePayloads[eventIndex];
+        if (!payload) continue;
+
+        let wakuDelivered = false;
+        try {
+          const receiverPubKeyHex = await contract.getWakuPublicKey(payload.client.address);
+          if (receiverPubKeyHex && receiverPubKeyHex !== '0x' && receiverPubKeyHex.length > 2) {
+            const receiverKeyBytes = hexToBytes(receiverPubKeyHex);
+            await sendEncryptedInvoice(payload, receiverKeyBytes, account.chainId, invoiceId);
+            wakuDelivered = true;
+          }
+        } catch (wakuErr) {
+          console.warn(`Waku send for invoice ${invoiceId} failed (non-critical):`, wakuErr);
+        }
+
+        try {
+          await storeInvoice({
+            invoiceId,
+            chainId: account.chainId,
+            from: account.address.toLowerCase(),
+            to: payload.client.address.toLowerCase(),
+            isPaid: false,
+            isCancelled: false,
+            wakuDelivered,
+            invoiceDataHash: invoiceDataHashes[eventIndex],
+            data: payload,
+          });
+        } catch (err) {
+          console.error(`Failed to store invoice ${invoiceId} locally:`, err);
+        }
+      }
 
       toast.success(
         `Successfully created ${validInvoices.length} invoices in batch!`
@@ -552,6 +520,23 @@ function CreateInvoicesBatch() {
           onDismiss={() => setShowWalletAlert(false)}
         />
       </div>
+
+      {!isRegistered && isConnected && (
+        <div className="w-full max-w-7xl mx-auto px-4 md:px-6 mb-4">
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center justify-between">
+            <div className="text-sm text-yellow-800">
+              <strong>Waku Messaging Not Registered:</strong> You need to register your Waku key to receive encrypted invoices over the peer-to-peer network.
+            </div>
+            <Button 
+              onClick={() => deriveAndRegister()} 
+              disabled={wakuLoading}
+              className="bg-yellow-600 hover:bg-yellow-700 text-white ml-4"
+            >
+              {wakuLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : "Register Now"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 md:px-6">
         {/* Simple Header */}

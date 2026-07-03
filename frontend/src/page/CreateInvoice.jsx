@@ -32,14 +32,6 @@ import { format } from "date-fns";
 import { Label } from "../components/ui/label";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { LitNodeClient } from "@lit-protocol/lit-node-client";
-import { encryptString } from "@lit-protocol/encryption/src/lib/encryption.js";
-import { LIT_ABILITY, LIT_NETWORK } from "@lit-protocol/constants";
-import {
-  createSiweMessageWithRecaps,
-  generateAuthSig,
-  LitAccessControlConditionResource,
-} from "@lit-protocol/auth-helpers";
 
 import TokenIntegrationRequest from "@/components/TokenIntegrationRequest";
 import { ERC20_ABI } from "@/contractsABI/ERC20_ABI";
@@ -50,6 +42,12 @@ import { CopyButton } from "@/components/ui/copyButton";
 import CountryPicker from "@/components/CountryPicker";
 import { useTokenList } from "@/hooks/useTokenList";
 import toast from "react-hot-toast";
+import { storeInvoice } from "../services/invoiceStorage/invoiceDB.js";
+import { useWaku } from "@/hooks/useWaku";
+import { useWakuKeys } from "@/hooks/useWakuKeys";
+import { sendEncryptedInvoice } from "@/services/waku/wakuInvoiceMessaging.js";
+import { hexToBytes } from "@/services/waku/wakuKeyManager.js";
+import { computeInvoiceHash } from "@/services/waku/invoiceHashUtils.js";
 
 import ProductCatalogImport from "@/components/ProductCatalogImport";
 import ProductAutocompleteInput from "@/components/ProductAutocompleteInput";
@@ -84,8 +82,9 @@ function CreateInvoice() {
   const [dueDate, setDueDate] = useState(new Date());
   const [issueDate, setIssueDate] = useState(new Date());
   const [loading, setLoading] = useState(false);
+  const { deriveAndRegister, isRegistered, isLoading: wakuLoading } = useWakuKeys();
   const navigate = useNavigate();
-  const litClientRef = useRef(null);
+
   const itemRefsMobile = useRef([]);
   const itemRefsDesktop = useRef([]);
   const [clientAddress, setClientAddress] = useState("");
@@ -279,19 +278,6 @@ function CreateInvoice() {
     setTotalAmountDue(formatUnits(total, 18));
   }, [itemData]);
 
-  useEffect(() => {
-    const initLit = async () => {
-      if (!litClientRef.current) {
-        const client = new LitNodeClient({
-          litNetwork: LIT_NETWORK.DatilDev,
-          debug: false,
-        });
-        await client.connect();
-        litClientRef.current = client;
-      }
-    };
-    initLit();
-  }, []);
 
   useEffect(() => {
     setShowWalletAlert(!isConnected);
@@ -426,77 +412,8 @@ const validateClientAddress = useCallback((value) => {
 
       const invoiceString = JSON.stringify(invoicePayload);
 
-      // 2. Setup Lit
-      const litNodeClient = litClientRef.current;
-      if (!litNodeClient) {
-        toast.error("Lit client not initialized");
-        return;
-      }
-      const accessControlConditions = [
-        {
-          contractAddress: "",
-          standardContractType: "",
-          chain: "ethereum",
-          method: "",
-          parameters: [":userAddress"],
-          returnValueTest: {
-            comparator: "=",
-            value: account.address.toLowerCase(),
-          },
-        },
-        { operator: "or" },
-        {
-          contractAddress: "",
-          standardContractType: "",
-          chain: "ethereum",
-          method: "",
-          parameters: [":userAddress"],
-          returnValueTest: {
-            comparator: "=",
-            value: data.clientAddress.toLowerCase(),
-          },
-        },
-      ];
-
-      const { ciphertext, dataToEncryptHash } = await encryptString(
-        {
-          accessControlConditions,
-          dataToEncrypt: invoiceString,
-        },
-        litNodeClient
-      );
-
-      const sessionSigs = await litNodeClient.getSessionSigs({
-        chain: "ethereum",
-        resourceAbilityRequests: [
-          {
-            resource: new LitAccessControlConditionResource("*"),
-            ability: LIT_ABILITY.AccessControlConditionDecryption,
-          },
-        ],
-        authNeededCallback: async ({
-          uri,
-          expiration,
-          resourceAbilityRequests,
-        }) => {
-          const nonce = await litNodeClient.getLatestBlockhash();
-          const toSign = await createSiweMessageWithRecaps({
-            uri,
-            expiration,
-            resources: resourceAbilityRequests,
-            walletAddress: account.address,
-            nonce,
-            litNodeClient,
-          });
-
-          return await generateAuthSig({
-            signer,
-            toSign,
-          });
-        },
-      });
-
-      const encryptedStringBase64 = btoa(ciphertext);
+      // 2. Compute invoice data hash for on-chain storage
+      const invoiceDataHash = computeInvoiceHash(invoicePayload);
 
       if (!account?.chainId) {
         throw new Error("Missing chainId: wallet connected but chain not configured");
@@ -516,11 +433,59 @@ const validateClientAddress = useCallback((value) => {
         data.clientAddress,
         ethers.parseUnits(totalAmountDue.toString(), paymentToken.decimals),
         paymentToken.address,
-        encryptedStringBase64,
-        dataToEncryptHash
+        invoiceDataHash
       );
 
       const receipt = await tx.wait();
+
+      const iface = new ethers.Interface(ChainvoiceABI);
+      let invoiceId = null;
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog(log);
+          if (parsed?.name === 'InvoiceCreated') {
+            invoiceId = parsed.args[0].toString();
+            break;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      let wakuDelivered = false;
+      if (invoiceId) {
+        try {
+          const receiverPubKeyHex = await contract.getWakuPublicKey(data.clientAddress);
+          if (receiverPubKeyHex && receiverPubKeyHex !== '0x' && receiverPubKeyHex.length > 2) {
+            const receiverKeyBytes = hexToBytes(receiverPubKeyHex);
+            await sendEncryptedInvoice(invoicePayload, receiverKeyBytes, account.chainId, invoiceId);
+            wakuDelivered = true;
+          }
+        } catch (wakuErr) {
+          console.warn(`Waku send for invoice ${invoiceId} failed (non-critical):`, wakuErr);
+        }
+
+        try {
+          await storeInvoice({
+            invoiceId,
+            chainId: account.chainId,
+            from: account.address.toLowerCase(),
+            to: data.clientAddress.toLowerCase(),
+            isPaid: false,
+            isCancelled: false,
+            wakuDelivered,
+            invoiceDataHash,
+            data: invoicePayload,
+          });
+        } catch (storageErr) {
+          console.error("Invoice created, but local persistence failed:", storageErr);
+          toast.error(
+            "Invoice was created on-chain, but could not be saved locally. Please do not leave this page until you back up the invoice details."
+          );
+          return;
+        }
+      }
+
       setTimeout(() => navigate("/dashboard/sent"), 4000);
     } catch (err) {
       console.error("Encryption or transaction failed:", err);
@@ -563,6 +528,23 @@ const validateClientAddress = useCallback((value) => {
           onDismiss={() => setShowWalletAlert(false)}
         />
       </div>
+
+      {!isRegistered && isConnected && (
+        <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 md:px-6 mb-4">
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center justify-between">
+            <div className="text-sm text-yellow-800">
+              <strong>Waku Messaging Not Registered:</strong> You need to register your Waku key to receive encrypted invoices over the peer-to-peer network.
+            </div>
+            <Button 
+              onClick={() => deriveAndRegister()} 
+              disabled={wakuLoading}
+              className="bg-yellow-600 hover:bg-yellow-700 text-white ml-4"
+            >
+              {wakuLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : "Register Now"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 md:px-6">
         {(searchParams.get("clientAddress") ||

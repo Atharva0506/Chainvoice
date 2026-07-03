@@ -16,17 +16,12 @@ import { useRef } from "react";
 import { generateInvoicePDF } from "@/utils/generateInvoicePDF";
 import { formatInvoiceTotal } from "@/utils/invoiceExportHelpers";
 import { useInvoiceExport } from "@/hooks/useInvoiceExport";
-import { LitNodeClient } from "@lit-protocol/lit-node-client";
-import { decryptToString } from "@lit-protocol/encryption/src/lib/encryption.js";
-import { LIT_ABILITY, LIT_NETWORK } from "@lit-protocol/constants";
-import {
-  createSiweMessageWithRecaps,
-  generateAuthSig,
-  LitAccessControlConditionResource,
-} from "@lit-protocol/auth-helpers";
+import { getReceivedInvoices as getLocalReceivedInvoices, storeInvoice, updateInvoiceStatus } from "../services/invoiceStorage/invoiceDB.js";
+import { subscribeToInvoices, queryStoredInvoices } from "@/services/waku/wakuInvoiceMessaging.js";
+import { deriveWakuKeyPair, hasCachedKeys } from "@/services/waku/wakuKeyManager.js";
+import { useWakuKeys } from "@/hooks/useWakuKeys";
 import { ERC20_ABI } from "@/contractsABI/ERC20_ABI";
-import { toast } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
+import toast from "react-hot-toast";
 import CancelIcon from "@mui/icons-material/Cancel";
 
 import {
@@ -91,11 +86,12 @@ function ReceivedInvoice() {
   const [receivedInvoices, setReceivedInvoice] = useState([]);
   const [fee, setFee] = useState(0);
   const [error, setError] = useState(null);
-  const [litReady, setLitReady] = useState(false);
-  const litClientRef = useRef(null);
+
   const [paymentLoading, setPaymentLoading] = useState({});
-  const [networkLoading, setNetworkLoading] = useState(false);
   const [showWalletAlert, setShowWalletAlert] = useState(!isConnected);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const { isRegistered, deriveKeysOnly, isLoading: wakuLoading } = useWakuKeys();
+  const wakuUnsubRef = useRef(null);
 
   // Error handling states
   const [paymentError, setPaymentError] = useState("");
@@ -631,28 +627,6 @@ function ReceivedInvoice() {
     }
   };
 
-  // Initialize Lit Protocol
-  useEffect(() => {
-    const initLit = async () => {
-      try {
-        setLoading(true);
-        if (!litClientRef.current) {
-          const client = new LitNodeClient({
-            litNetwork: LIT_NETWORK.DatilDev,
-            debug: false,
-          });
-          await client.connect();
-          litClientRef.current = client;
-          setLitReady(true);
-        }
-      } catch (error) {
-        console.error("Error initializing Lit client:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    initLit();
-  }, []);
 
   useEffect(() => {
     setShowWalletAlert(!isConnected);
@@ -660,7 +634,9 @@ function ReceivedInvoice() {
 
   // Fetch invoices
   useEffect(() => {
-    if (!walletClient || !address || !litReady) return;
+    if (!walletClient || !address) return;
+
+    let cancelled = false;
 
     const fetchReceivedInvoices = async () => {
       try {
@@ -669,12 +645,7 @@ function ReceivedInvoice() {
         const provider = new BrowserProvider(walletClient);
         const signer = await provider.getSigner();
 
-        const litNodeClient = litClientRef.current;
-        if (!litNodeClient) {
-          setError("Lit client not initialized. Please refresh the page.");
-          setLoading(false);
-          return;
-        }
+
 
         const contractAddress = import.meta.env[
           `VITE_CONTRACT_ADDRESS_${chainId}`
@@ -696,89 +667,54 @@ function ReceivedInvoice() {
 
         const decryptedInvoices = [];
 
+        // 1. Fetch local invoices
+        const localInvoices = await getLocalReceivedInvoices(address);
+        const localInvoiceMap = new Map();
+        for (const local of localInvoices) {
+          if (String(local.chainId) === String(chainId)) {
+            localInvoiceMap.set(String(local.invoiceId), local);
+          }
+        }
+
         for (const invoice of res) {
           try {
-            const id = invoice[0];
+            const id = invoice[0].toString();
             const from = invoice[1].toLowerCase();
             const to = invoice[2].toLowerCase();
             const isPaid = invoice[5];
             const isCancelled = invoice[6];
-            const encryptedStringBase64 = invoice[7];
-            const dataToEncryptHash = invoice[8];
+            const invoiceDataHash = invoice[7]; // bytes32
 
-            if (!encryptedStringBase64 || !dataToEncryptHash) continue;
+            if (!invoiceDataHash) continue;
 
             const currentUserAddress = address.toLowerCase();
             if (currentUserAddress !== from && currentUserAddress !== to) {
               continue;
             }
 
-            const ciphertext = atob(encryptedStringBase64);
-            const accessControlConditions = [
-              {
-                contractAddress: "",
-                standardContractType: "",
-                chain: "ethereum",
-                method: "",
-                parameters: [":userAddress"],
-                returnValueTest: {
-                  comparator: "=",
-                  value: from,
-                },
-              },
-              { operator: "or" },
-              {
-                contractAddress: "",
-                standardContractType: "",
-                chain: "ethereum",
-                method: "",
-                parameters: [":userAddress"],
-                returnValueTest: {
-                  comparator: "=",
-                  value: to,
-                },
-              },
-            ];
+            const localInv = localInvoiceMap.get(id);
+            let parsed;
 
-            const sessionSigs = await litNodeClient.getSessionSigs({
-              chain: "ethereum",
-              resourceAbilityRequests: [
-                {
-                  resource: new LitAccessControlConditionResource("*"),
-                  ability: LIT_ABILITY.AccessControlConditionDecryption,
-                },
-              ],
-              authNeededCallback: async ({
-                uri,
-                expiration,
-                resourceAbilityRequests,
-              }) => {
-                const nonce = await litNodeClient.getLatestBlockhash();
-                const toSign = await createSiweMessageWithRecaps({
-                  uri,
-                  expiration,
-                  resources: resourceAbilityRequests,
-                  walletAddress: address,
-                  nonce,
-                  litNodeClient,
-                });
-                return await generateAuthSig({ signer, toSign });
-              },
-            });
+            if (localInv && localInv.data) {
+              parsed = { ...localInv.data };
+              
+              // Update local status if it changed
+              if (localInv.isPaid !== isPaid || localInv.isCancelled !== isCancelled) {
+                await updateInvoiceStatus(chainId, id, { isPaid, isCancelled });
+              }
+            } else {
+              // No local payload from Waku — build a minimal stub from on-chain data
+              // so the invoice still appears in the list.
+              parsed = {
+                amountDue: invoice[3].toString(),
+                user: { address: from },
+                client: { address: to },
+                paymentToken: { address: invoice[4] },
+                _onChainOnly: true, // Flag: full payload not yet received via Waku
+              };
+            }
 
-            const decryptedString = await decryptToString(
-              {
-                accessControlConditions,
-                chain: "ethereum",
-                ciphertext,
-                dataToEncryptHash,
-                sessionSigs,
-              },
-              litNodeClient
-            );
-
-            const parsed = JSON.parse(decryptedString);
-            parsed["id"] = id;
+            parsed["id"] = BigInt(id);
             parsed["isPaid"] = isPaid;
             parsed["isCancelled"] = isCancelled;
 
@@ -831,6 +767,10 @@ function ReceivedInvoice() {
               }
             }
 
+            if (parsed._onChainOnly && parsed.paymentToken?.decimals) {
+              parsed.amountDue = ethers.formatUnits(parsed.amountDue, parsed.paymentToken.decimals);
+            }
+
             decryptedInvoices.push(parsed);
           } catch (err) {
             console.error(`Error processing invoice ${invoice[0]}:`, err);
@@ -843,18 +783,91 @@ function ReceivedInvoice() {
         const fee = await contract.fee();
         setFee(fee);
       } catch (error) {
-        console.error("Fetch error:", error);
-        setError(
-          "Unable to load invoices. The connected network is not supported or the contract is not deployed on this network. Please switch to a supported network and try again."
-        );
-
+        console.error("Error fetching received invoices:", error);
+        setError("Failed to fetch invoices");
       } finally {
         setLoading(false);
       }
     };
 
     fetchReceivedInvoices();
-  }, [walletClient, litReady, address, tokens]);
+
+    // Waku Subscription Setup
+    const startSubscription = async () => {
+      try {
+        if (!hasCachedKeys(address)) return; // Only subscribe if keys exist
+        const provider = new BrowserProvider(walletClient);
+        const signer = await provider.getSigner();
+        const { privateKey } = await deriveWakuKeyPair(signer, address);
+
+        const storeWakuMessage = async (message) => {
+          try {
+            await storeInvoice({
+              invoiceId: message.invoiceId,
+              chainId: message.chainId,
+              from: message.data?.senderAddress || message.data?.from,
+              to: address.toLowerCase(),
+              data: message.data,
+              isPaid: false,
+              isCancelled: false,
+            });
+            return true;
+          } catch (err) {
+            console.error('[ReceivedInvoice] Failed to store Waku message:', err);
+            return false;
+          }
+        };
+
+        try {
+          const storedMessages = await queryStoredInvoices(privateKey, chainId);
+          let newCount = 0;
+          for (const message of storedMessages) {
+            if (cancelled) break;
+            const stored = await storeWakuMessage(message);
+            if (stored) newCount++;
+          }
+          if (newCount > 0 && !cancelled) {
+            setRefreshTrigger(p => p + 1);
+          }
+        } catch (storeErr) {
+          console.warn('[ReceivedInvoice] Waku Store query failed:', storeErr);
+        }
+
+        if (cancelled) return;
+
+        const unsubscribe = await subscribeToInvoices(
+          privateKey,
+          chainId,
+          async (message) => {
+            if (cancelled) return;
+            const stored = await storeWakuMessage(message);
+            if (stored) {
+              setRefreshTrigger(p => p + 1);
+              toast.success('New invoice received!');
+            }
+          }
+        );
+
+        if (!cancelled) {
+          wakuUnsubRef.current = unsubscribe;
+        } else {
+          if (typeof unsubscribe === 'function') unsubscribe();
+        }
+      } catch (err) {
+        console.warn('[ReceivedInvoice] Waku setup failed:', err);
+      }
+    };
+
+    startSubscription();
+
+    return () => {
+      cancelled = true;
+      if (typeof wakuUnsubRef.current === 'function') {
+        wakuUnsubRef.current();
+        wakuUnsubRef.current = null;
+      }
+    };
+  }, [address, chainId, isConnected, walletClient, refreshTrigger]);
 
   const toggleDrawer = (invoice) => (event) => {
     if (
@@ -919,8 +932,10 @@ function ReceivedInvoice() {
   };
 
   const formatDate = (issueDate) => {
+    if (!issueDate) return "N/A";
     const date = new Date(issueDate);
-    return date.toLocaleString();
+    if (isNaN(date.getTime())) return "N/A";
+    return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
   };
 
   const unpaidInvoices = receivedInvoices.filter(
@@ -940,6 +955,25 @@ function ReceivedInvoice() {
       </div>
       <div className=" md:p-6 ">
         <div className="max-w-8xl mx-auto">
+
+          {/* Waku Registration Alert */}
+          {!isRegistered && isConnected && !loading && (
+            <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-4 mt-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center justify-between">
+                <div className="text-sm text-yellow-800">
+                  <strong>Waku Messaging Not Registered:</strong> You need to register your Waku key to receive incoming invoices instantly.
+                </div>
+                <Button 
+                  onClick={() => deriveKeysOnly()} 
+                  disabled={wakuLoading}
+                  className="bg-yellow-600 hover:bg-yellow-700 text-white ml-4"
+                >
+                  {wakuLoading ? <CircularProgress size={16} sx={{ color: 'white', mr: 1 }} /> : "Register Now"}
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between items-center mb-2">
             <div>
               <h2 className="text-2xl font-bold text-white">
