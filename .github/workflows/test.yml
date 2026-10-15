@@ -6,15 +6,22 @@ on:
       - main
     paths:
       - 'frontend/**'
+      - '.github/workflows/test.yml'
   pull_request:
     paths:
       - 'frontend/**'
+      - '.github/workflows/test.yml'
 
 # Read-only on purpose. This workflow runs untrusted fork code, so it must not
 # hold a token that can write to the repo. Labels and the build-size comment are
 # posted by pr-report.yml, which runs after this one in the base-repo context.
 permissions:
   contents: read
+
+# A new push to a pull request makes the run for the previous commit worthless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test-and-build:
@@ -33,7 +40,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'npm'
           cache-dependency-path: './frontend/package.json'
 
@@ -42,7 +49,9 @@ jobs:
 
       - name: Run lint
         continue-on-error: true
-        run: npm run lint
+        run: |
+          npm run lint > lint_output.log 2>&1 || echo "LINT_FAILED=true" >> $GITHUB_ENV
+          cat lint_output.log
 
       - name: Run tests with coverage
         id: test
@@ -65,8 +74,10 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         run: |
           mkdir -p pr-report
+          echo "${LINT_FAILED:-false}" > pr-report/lint_failed
           echo "${TESTS_FAILED:-false}" > pr-report/tests_failed
           echo "${BUILD_FAILED:-false}" > pr-report/build_failed
+          cp lint_output.log pr-report/ 2>/dev/null || true
           cp test_output.log pr-report/ 2>/dev/null || true
           cp build_output.log pr-report/ 2>/dev/null || true
 
@@ -77,6 +88,10 @@ jobs:
           name: pr-report
           path: frontend/pr-report
           retention-days: 1
+
+      - name: Fail if lint failed
+        if: env.LINT_FAILED == 'true'
+        run: exit 1
 
       - name: Fail if tests failed
         if: env.TESTS_FAILED == 'true'
