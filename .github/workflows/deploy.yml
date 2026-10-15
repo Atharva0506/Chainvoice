@@ -55,12 +55,7 @@ jobs:
           node-version: 24
 
       - name: Install dependencies
-        run: |
-          if [ -f "./frontend/package-lock.json" ]; then
-            npm ci
-          else
-            npm install
-          fi
+        run: npm ci
         working-directory: ./frontend
 
       - name: Build
