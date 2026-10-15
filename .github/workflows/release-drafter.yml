@@ -4,7 +4,7 @@ name: Release Drafter
 # release. Publishing it stays a manual step. Config: .github/release-drafter.yml
 on:
   push:
-    branches: [main]
+    branches: [main, e2e/ci-base]
   workflow_dispatch:
 
 permissions:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   update-draft:
     # A fork has no use for a draft of this repository's release.
-    if: github.repository_owner == 'StabilityNexus'
+    if: github.repository_owner == 'Atharva0506'
     runs-on: ubuntu-latest
     permissions:
       contents: write # creates and edits the draft release
