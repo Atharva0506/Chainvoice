@@ -59,3 +59,4 @@ When a pull request modifies files inside `frontend/`, a live preview is automat
 A preview is built with the Sepolia contract address only, so connect a wallet on Ethereum Sepolia when testing one — every other network will report itself as unsupported, exactly as it does in production. Previews are served from the same site as production under `/pr-preview/pr-<n>/`; see [Deployments.md](Deployments.md#frontend-site) for how that works.
 
 Thank you for your cooperation and continued contributions.
+<!-- e2e docs-only test -->
