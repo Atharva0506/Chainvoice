@@ -170,3 +170,5 @@ Serves the production build locally for previewing.
 - Vite exposes frontend environment variables only when they are prefixed with `VITE_`.
 - The `@` import alias maps to `frontend/src`.
 - The Vite configuration includes Node polyfills for `buffer`, `crypto`, `stream`, and `util`.
+
+<!-- e2e CI test -->
