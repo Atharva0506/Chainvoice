@@ -1,0 +1,33 @@
+name: Dependency Review
+
+# Fails a pull request that adds a dependency (npm or GitHub Action) with a
+# known high or critical advisory. Only what the PR changes is checked, so the
+# advisories already on main do not block unrelated work.
+on:
+  pull_request:
+    paths:
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          # A fork's token cannot comment; the job summary carries the details.
+          comment-summary-in-pr: never
+          # Already on main and accepted (#274), so not new to any PR:
+          # braces (GHSA-vfj7-8cjw-p6xm) runs only in Tailwind's build tooling,
+          # and browser builds swap ws (GHSA-96hv-2xvq-fx4p) for a stub.
+          allow-ghsas: GHSA-96hv-2xvq-fx4p, GHSA-vfj7-8cjw-p6xm
