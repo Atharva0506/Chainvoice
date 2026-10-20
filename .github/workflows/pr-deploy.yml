@@ -315,25 +315,32 @@ jobs:
             const { client, branchOf, commitOf, newestFirst } = require(`${scripts}/cloudflare-pages.js`);
             const upsert = require(`${scripts}/upsert-comment.js`);
 
-            const cf = client({
-              accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
-              apiToken: process.env.CLOUDFLARE_API_TOKEN,
-              project: process.env.PROJECT,
-            });
             const prNumber = Number(process.env.PR_NUMBER);
             const branch = `pr-${prNumber}`;
 
             // An earlier commit may have been approved, and its preview stays up
-            // until this one is.
-            const [latest] = (await cf.previewDeployments())
-              .filter((deployment) => branchOf(deployment) === branch)
-              .sort(newestFirst);
+            // until this one is. Only a nicety: runs Dependabot triggers get no
+            // Actions secrets, and the comment matters more than the link.
             let previous = '';
-            if (latest) {
-              const { subdomain } = await cf.project();
-              previous =
-                `| **Last approved preview** | https://${branch}.${subdomain}/ ` +
-                `(\`${commitOf(latest).slice(0, 7)}\`) |\n`;
+            if (process.env.CLOUDFLARE_API_TOKEN) {
+              try {
+                const cf = client({
+                  accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+                  apiToken: process.env.CLOUDFLARE_API_TOKEN,
+                  project: process.env.PROJECT,
+                });
+                const [latest] = (await cf.previewDeployments())
+                  .filter((deployment) => branchOf(deployment) === branch)
+                  .sort(newestFirst);
+                if (latest) {
+                  const { subdomain } = await cf.project();
+                  previous =
+                    `| **Last approved preview** | https://${branch}.${subdomain}/ ` +
+                    `(\`${commitOf(latest).slice(0, 7)}\`) |\n`;
+                }
+              } catch (error) {
+                core.warning(`Could not look up the last approved preview: ${error.message}`);
+              }
             }
 
             const body =
@@ -375,12 +382,19 @@ jobs:
             const { client, prune } = require(`${scripts}/cloudflare-pages.js`);
             const upsert = require(`${scripts}/upsert-comment.js`);
 
+            const prNumber = Number(process.env.PR_NUMBER);
+            // Runs Dependabot triggers get no Actions secrets. Its pull requests
+            // only ever have a preview if a maintainer approved one, and the
+            // weekly sweep deletes that.
+            if (!process.env.CLOUDFLARE_API_TOKEN) {
+              core.warning(`No Cloudflare credentials in this run; leaving pr-${prNumber} to the sweep.`);
+              return;
+            }
             const cf = client({
               accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
               apiToken: process.env.CLOUDFLARE_API_TOKEN,
               project: process.env.PROJECT,
             });
-            const prNumber = Number(process.env.PR_NUMBER);
             const { removed } = await prune(cf, `pr-${prNumber}`);
             core.info(`Removed ${removed} deployment(s) of pr-${prNumber}.`);
 
