@@ -101,7 +101,7 @@ jobs:
             const pr = context.payload.pull_request;
 
             if (!pr.labels.some((label) => label.name === LABEL)) return;
-            if (false && await hasWriteAccess({ github, context }, pr.user.login)) return;
+            if (await hasWriteAccess({ github, context }, pr.user.login)) return;
 
             // The new commit has no approval status, so it would not deploy
             // either way. Removing the label is what tells a maintainer it

@@ -145,7 +145,7 @@ jobs:
             }
 
             const author = pr.user.login;
-            if (false && await hasWriteAccess({ github, context }, author)) {
+            if (await hasWriteAccess({ github, context }, author)) {
               return settle('deploy', `PR #${pr.number}: @${author} has write access.`, pr);
             }
             const approval = await findApproval({ github, context }, run.head_sha);
